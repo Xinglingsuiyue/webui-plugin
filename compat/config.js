@@ -37,21 +37,36 @@ function shippedDefaults(name) {
   return readYamlFileSync(path.join(SHIPPED_DEFAULT_DIR, `${name}.yaml`))
 }
 
-function ensurePluginConfigFiles() {
-  for (const name of PLUGIN_CONFIGS) {
-    const source = path.join(SHIPPED_DEFAULT_DIR, `${name}.yaml`)
-    if (!fs.existsSync(source)) continue
-    for (const dir of [CORE_DEFAULT_DIR, CORE_CONFIG_DIR]) {
-      try {
-        fs.mkdirSync(dir, { recursive: true })
-        const target = path.join(dir, `${name}.yaml`)
-        if (!fs.existsSync(target)) fs.copyFileSync(source, target)
-      } catch {}
+function configSources() {
+  const sources = new Map()
+  try {
+    for (const file of fs.readdirSync(CORE_DEFAULT_DIR)) {
+      const source = path.join(CORE_DEFAULT_DIR, file)
+      if (fs.statSync(source).isFile()) sources.set(file, source)
     }
+  } catch {}
+  for (const name of PLUGIN_CONFIGS) {
+    const file = `${name}.yaml`
+    const source = path.join(SHIPPED_DEFAULT_DIR, file)
+    if (fs.existsSync(source)) sources.set(file, source)
+  }
+  return sources
+}
+
+function ensureConfigFiles() {
+  const sources = configSources()
+  for (const dir of [CORE_DEFAULT_DIR, CORE_CONFIG_DIR]) {
+    try {
+      fs.mkdirSync(dir, { recursive: true })
+      for (const [file, source] of sources) {
+        const target = path.join(dir, file)
+        if (!fs.existsSync(target)) fs.copyFileSync(source, target)
+      }
+    } catch {}
   }
 }
 
-ensurePluginConfigFiles()
+ensureConfigFiles()
 
 function getAllCfg(name) {
   const base = coreCfg.getAllCfg(name) || {}
