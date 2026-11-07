@@ -196,6 +196,43 @@ export function installPluginFilter(loader, { isDisabled, pendingFolders, sweep 
   return true
 }
 
+export function installDisposeHook(loader) {
+  if (!loader || typeof loader.unloadPlugin !== "function") return false
+  if (loader.__webuiPluginDispose === true) return true
+  const original = loader.unloadPlugin
+  loader.unloadPlugin = async function (key, ...rest) {
+    try {
+      return await original.call(this, key, ...rest)
+    } finally {
+      const map = loader.__webuiPluginDisposers
+      if (map) {
+        const name = String(key)
+        for (const [target, list] of [...map]) {
+          if (name !== target && !name.startsWith(`${target}/`)) continue
+          map.delete(target)
+          for (const dispose of list) {
+            try {
+              await dispose()
+            } catch (error) {
+              globalThis.Bot?.makeLog?.("error", ["插件资源回收错误", error], "Plugin")
+            }
+          }
+        }
+      }
+    }
+  }
+  loader.__webuiPluginDispose = true
+  return true
+}
+
+export function addDispose(loader, key, dispose) {
+  installDisposeHook(loader)
+  const map = (loader.__webuiPluginDisposers ??= new Map())
+  const list = map.get(String(key)) ?? []
+  list.push(dispose)
+  map.set(String(key), list)
+}
+
 export function installToolSync(loader, registry) {
   if (!loader || typeof loader.unloadPlugin !== "function" || !registry) return false
   if (loader.__webuiPluginToolSync === true) return true

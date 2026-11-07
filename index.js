@@ -3,6 +3,7 @@ import PluginsLoader from "../../lib/plugins/loader.js"
 import { ensureWebuiData } from "./webui/dataDir.js"
 import { installBotOnline } from "./compat/bots.js"
 import {
+  addDispose,
   installDealHook,
   installPluginFilter,
   installToolSync,
@@ -88,10 +89,12 @@ class WebUICore extends plugin {
 
   async init() {
     let webui = null
-    this.addCleanup(async () => {
+    const dispose = async () => {
       webui?.dispose?.()
       webui = null
-    })
+    }
+    if (typeof this.addCleanup === "function") this.addCleanup(dispose)
+    else addDispose(PluginsLoader, SELF_KEY, dispose)
 
     installDealHook(PluginsLoader)
 
