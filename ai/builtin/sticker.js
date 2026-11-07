@@ -115,7 +115,6 @@ export async function fetchImageBuffer(source) {
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT)
       try {
-
         let current = url
         let response
         for (let hop = 0; hop <= 3; hop++) {
@@ -497,7 +496,6 @@ export function registerStickerTools(deps = {}) {
         loadError = result.error || ""
       }
       if (!buffer) {
-
         const sources = await collectStickerSources(e)
         const index = Math.max(1, Number(args.imageIndex) || 1) - 1
         const target = sources[index]
@@ -717,7 +715,6 @@ export function registerStickerTools(deps = {}) {
         loadError = result.error || ""
       }
       if (!buffer) {
-
         const refs = (await collectStickerSources(e)).slice(0, 3)
         const results = await Promise.all(refs.map(ref => loadStickerSource(ref, e)))
         const hit = results.find(result => result.buffer)

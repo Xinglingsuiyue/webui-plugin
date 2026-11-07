@@ -112,7 +112,6 @@ function cleanGeminiSchema(value) {
 function normalizeUsage(usage, adapterType, apiFormat) {
   if (!usage || typeof usage !== "object") return {}
   if (adapterType === "openai") {
-
     const cached =
       Number(usage.prompt_tokens_details?.cached_tokens) ||
       Number(usage.input_tokens_details?.cached_tokens) ||
@@ -200,7 +199,6 @@ function mapClaudeFinishReason(reason) {
 }
 
 export default class AIClient {
-
   static MODELS = {
     "gpt-4o": { maxTokens: 128000, outputTokens: 4096 },
     "gpt-4o-mini": { maxTokens: 128000, outputTokens: 4096 },

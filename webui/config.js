@@ -318,7 +318,6 @@ function commentToLabel(comment, key) {
 }
 
 function fieldNeedsRestart(fileName, pathList, kind) {
-
   if (kind !== "core" || fileName !== "webui") return false
   return String(pathList[0] || "") === "path"
 }
@@ -594,7 +593,6 @@ function normalizeFieldValue(field, raw) {
     if (value === null) value = null
     else value = String(value)
   } else if (field.type === "null" || !field.type) {
-
   }
 
   if (field.options?.length && value !== null) {

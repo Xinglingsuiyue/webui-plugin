@@ -1173,7 +1173,6 @@ class AIAdminStore {
     this._ensure()
     const next = { ...this.voiceConfig, ...value }
     if (next.apiKey === "" || String(next.apiKey).includes("***")) {
-
       if (String(value?.apiKey || "").includes("***") || value?.apiKey === undefined)
         next.apiKey = this.voiceConfig.apiKey
     }

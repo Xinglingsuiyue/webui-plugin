@@ -87,7 +87,6 @@ class WebUICore extends plugin {
   }
 
   async init() {
-
     let webui = null
     this.addCleanup(async () => {
       webui?.dispose?.()

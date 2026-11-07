@@ -33,7 +33,6 @@ function moveLegacy(name) {
   const target = path.join(WEBUI_DATA_DIR, name)
   if (!fs.existsSync(source)) return
   if (fs.existsSync(target)) {
-
     try {
       const sourceIsDir = fs.statSync(source).isDirectory()
       const targetIsEmptyDir =

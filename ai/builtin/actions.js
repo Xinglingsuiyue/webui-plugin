@@ -178,14 +178,12 @@ export function registerActionTools(deps = {}) {
       if (!/^\d{5,20}$/.test(target)) return { success: false, error: "目标 QQ 号无效" }
       if (target === String(e.self_id || "")) return { success: false, error: "不能戳自己" }
       try {
-
         if (e.bot?.sendApi) {
           const params = { group_id: Number(e.group_id), user_id: Number(target) }
           let sent
           try {
             sent = await e.bot.sendApi("group_poke", params)
           } catch (err) {
-
             sent = await e.bot.sendApi("send_poke", params)
           }
           const errors = Array.isArray(sent?.error) ? sent.error.filter(Boolean) : []

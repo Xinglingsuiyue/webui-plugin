@@ -369,7 +369,6 @@ async function fetchJsIndex() {
     const entries = result.value.entries
     sources.push({ id: meta.id, label: meta.label, repo: meta.repo, ok: entries.length > 0, count: entries.length, error: entries.length ? "" : "未解析到插件" })
     for (const entry of entries) {
-
       const key = `${entry.file.toLowerCase()}|${String(entry.downloadUrls[0] || "").toLowerCase()}`
       const existing = merged.get(key)
       if (existing) {
@@ -1348,7 +1347,6 @@ export async function installSinglePlugin({ urls, title = "", file = "" } = {}) 
 
   lockOperation("安装单 JS 插件")
   try {
-
     let content = ""
     let lastError = null
     for (const candidate of targets) {
@@ -1432,7 +1430,6 @@ export async function uninstallPlugin({ name, confirm } = {}) {
 
   lockOperation("卸载插件")
   try {
-
     await unloadPluginGroup(target.name)
     const removed = await removePluginDir(target.name)
     if (!removed) {

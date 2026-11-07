@@ -440,7 +440,6 @@ function botAvatarSource(id) {
 }
 
 async function collectBots() {
-
   const ids = Array.from(Bot.uin || []).filter(id => Bot.bots?.[id])
   if (Bot.bots?.stdin && !ids.some(id => String(id) === "stdin")) ids.push("stdin")
   return ids
@@ -482,7 +481,6 @@ async function readBotMsgCounts(ids = []) {
       })
     })
   } catch {
-
   }
   return out
 }
@@ -491,7 +489,6 @@ async function collectAccounts() {
   const bots = await collectBots()
   const counted = await readBotMsgCounts(bots.map(item => item.self_id))
   return bots.map(item => {
-
     const client = Bot.bots?.[item.self_id] || Bot[item.self_id] || null
     const protocol = client ? botProtocol(client) : { loginProtocol: "未知", protocolVersion: "" }
     const stat = client?.stat || {}
@@ -618,7 +615,6 @@ function buildApp(opts) {
       index: false,
       maxAge: 0,
       setHeaders(res, filePath) {
-
         if (/\.(?:js|css|html)$/i.test(filePath)) res.setHeader("Cache-Control", "no-cache")
         else res.setHeader("Cache-Control", "no-store")
       },
@@ -865,7 +861,6 @@ function buildApp(opts) {
       const body = req.body && typeof req.body === "object" ? req.body : {}
       const updates = Array.isArray(body.updates) ? [...body.updates] : []
       if (name === "ai") {
-
         const keywordUpdate = updates.find(
           update => Array.isArray(update?.path) && update.path.length === 1 && update.path[0] === "triggerKeywords",
         )
@@ -881,7 +876,6 @@ function buildApp(opts) {
       }
       const result = saveCoreConfig(name, { ...body, updates })
       if (name === "webui") {
-
         const paths = new Set(
           updates.filter(update => Array.isArray(update?.path)).map(update => update.path.join(".")),
         )
@@ -947,7 +941,6 @@ function buildApp(opts) {
   router.get(
     "/help/theme/assets",
     asyncRoute(async (req, res) => {
-
       res.setHeader("Cache-Control", "private, max-age=3600")
       res.json({
         ok: true,
@@ -2971,7 +2964,6 @@ function buildApp(opts) {
   )
 
   router.get("/ai/groups", (req, res) => {
-
     const known = collectGroups().filter(group => {
       const id = String(group.group_id || "")
       return id && id !== "stdin" && !id.startsWith("stdin:")

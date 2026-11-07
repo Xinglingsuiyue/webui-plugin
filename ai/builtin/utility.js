@@ -485,7 +485,6 @@ function listToolsTool() {
 }
 
 export function registerUtilityTools(deps = {}) {
-
   const disabled = new Set((AIToolRegistry.builtinDisabledTools || []).map(String))
   const voiceConfigOf =
     deps.getVoiceConfig || (() => ({ enabled: true, provider: "free", voice: "zh", speed: 5 }))
@@ -663,7 +662,6 @@ export function registerUtilityTools(deps = {}) {
       if (!text) return { success: false, error: "请提供要合成的文本" }
       let audio
       try {
-
         const voice =
           voiceConfig.provider === "custom"
             ? voiceConfig.voice

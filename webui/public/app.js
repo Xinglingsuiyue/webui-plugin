@@ -1224,6 +1224,10 @@
     arcee: [
       "M12 2.4l9.6 17.2h-4.5L12 9.9l-5.1 9.7H2.4L12 2.4z",
     ],
+    relay: [
+      "M3 8.4h13.2l-2.4-2.4 1.7-1.7L20.8 9.6l-5.3 5.3-1.7-1.7 2.4-2.4H3V8.4z",
+      "M21 15.6H7.8l2.4 2.4-1.7 1.7L3.2 14.4l5.3-5.3 1.7 1.7-2.4 2.4H21v2.4z",
+    ],
     huawei: [
       "M3.67 6.14S1.82 7.91 1.72 9.78v.35c.08 1.51 1.22 2.4 1.22 2.4 1.83 1.79 6.26 4.04 7.3 4.55 0 0 .06.03.1-.01l.02-.04v-.04C7.52 10.8 3.67 6.14 3.67 6.14zM9.65 18.6c-.02-.08-.1-.08-.1-.08l-7.38.26c.8 1.43 2.15 2.53 3.56 2.2.96-.25 3.16-1.78 3.88-2.3.06-.05.04-.09.04-.09zm.08-.78C6.49 15.63.21 12.28.21 12.28c-.15.46-.2.9-.21 1.3v.07c0 1.07.4 1.82.4 1.82.8 1.69 2.34 2.2 2.34 2.2.7.3 1.4.31 1.4.31.12.02 4.4 0 5.54 0 .05 0 .08-.05.08-.05v-.06c0-.03-.03-.05-.03-.05zM9.06 3.19a3.42 3.42 0 00-2.57 3.15v.41c.03.6.16 1.05.16 1.05.66 2.9 3.86 7.65 4.55 8.65.05.05.1.03.1.03a.1.1 0 00.06-.1c1.06-10.6-1.11-13.42-1.11-13.42-.32.02-1.19.23-1.19.23zm8.299 2.27s-.49-1.8-2.44-2.28c0 0-.57-.14-1.17-.22 0 0-2.18 2.81-1.12 13.43.01.07.06.08.06.08.07.03.1-.03.1-.03.72-1.03 3.9-5.76 4.55-8.64 0 0 .36-1.4.02-2.34zm-2.92 13.07s-.07 0-.09.05c0 0-.01.07.03.1.7.51 2.85 2 3.88 2.3 0 0 .16.05.43.06h.14c.69-.02 1.9-.37 3-2.26l-7.4-.25zm7.83-8.41c.14-2.06-1.94-3.97-1.94-3.98 0 0-3.85 4.66-6.67 10.8 0 0-.03.08.02.13l.04.01h.06c1.06-.53 5.46-2.77 7.28-4.54 0 0 1.15-.93 1.21-2.42zm1.52 2.14s-6.28 3.37-9.52 5.55c0 0-.05.04-.03.11 0 0 .03.06.07.06 1.16 0 5.56 0 5.67-.02 0 0 .57-.02 1.27-.29 0 0 1.56-.5 2.37-2.27 0 0 .73-1.45.17-3.14z",
     ],
@@ -1314,6 +1318,7 @@
     { id: 'databricks', name: 'Databricks', color: '#ff3621', re: /dbrx|databricks/i },
     { id: 'nous', name: 'Nous Research', color: '#2f6f4e', re: /hermes|nousresearch|nous-/i },
     { id: 'arcee', name: 'Arcee', color: '#0d9488', re: /arcee/i },
+    { id: 'relay', name: '中转别名', color: '#64748b', re: /^(?:default|max|pro|fast|auto|base)-model(?:-|$)/i },
   ]
 
   function aiModelVendor(model, channel) {
@@ -1332,7 +1337,6 @@
     const glyphs = AI_MODEL_GLYPHS[vendor.id]
     let glyph
     if (typeof glyphs === "string") {
-
       glyph = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${glyphs}</svg>`
     } else if (Array.isArray(glyphs)) {
       glyph = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${glyphs
@@ -3080,7 +3084,6 @@
     const sections = [];
     let current = null;
     for (const field of fields || []) {
-
       if (field.hidden) continue;
       const name = field.section || "";
       if (!current || current.name !== name) {
@@ -5687,7 +5690,6 @@
     if (state.logs.loading) return;
     state.logs.loading = true;
     try {
-
       const params = new URLSearchParams({ type: state.logs.type });
       const data = await api(`/logs?${params.toString()}`);
       renderLogs(data);
@@ -6620,14 +6622,12 @@
           },
           {
             chunk: data => {
-
               if (!data?.text) return
               pending.output = pending.output ? `${pending.output}\n${data.text}` : data.text
               backendState.history[0] = { ...pending }
               renderBackendLog()
             },
             image: data => {
-
               if (!data?.image?.id) return
               pending.images = [...(pending.images || []), data.image]
               backendState.history[0] = { ...pending }
@@ -6873,7 +6873,6 @@
     }
     main.innerHTML = configLoadingHtml("正在读取 config/config/ai.yaml…");
     try {
-
       if (view === "ai-system" && !state.aiModels) await loadAIModels().catch(() => {});
       if (view === "ai-system") await loadProactiveConfig().catch(() => {});
       const detail = await api("/config/file/ai");
@@ -7583,7 +7582,6 @@
     if (!panel) return;
     panel.innerHTML = '<div class="muted">正在加载…</div>';
     try {
-
       const [data, models] = await Promise.all([
         api("/ai/model-fallback"),
         state.aiModels ? Promise.resolve(state.aiModels) : loadAIModels().catch(() => null),
@@ -8167,12 +8165,12 @@
 
   function aiModelPoolSelectHtml(item) {
     const current = String(item?.model || "");
-    const seen = new Set();
     const groups = [];
+    const all = new Set();
     for (const channel of aiSelectableChannels(state.aiModels).filter(channel => channel.enabled)) {
-      const models = aiChannelModels(channel).filter(model => !seen.has(model));
+      const models = aiChannelModels(channel);
       if (!models.length) continue;
-      for (const model of models) seen.add(model);
+      for (const model of models) all.add(model);
       groups.push(
         `<optgroup label="${esc(channel.name)}">${models
           .map(model => `<option value="${esc(model)}" ${model === current ? "selected" : ""}>${esc(model)}</option>`)
@@ -8180,7 +8178,7 @@
       );
     }
     const unknown =
-      current && !seen.has(current)
+      current && !all.has(current)
         ? `<optgroup label="当前值（不在模型池）"><option value="${esc(current)}" selected>${esc(current)}</option></optgroup>`
         : "";
     return `<select data-ai-field="model">
@@ -8688,7 +8686,6 @@
   }
 
   function presetOneFromJson(data) {
-
     const persona = data.persona && typeof data.persona === "object" ? data.persona : null
     const params =
       presetJsonPick(data, [/请求参数|采样参数|modelParams|params?|request/i]) || {}
@@ -8904,7 +8901,6 @@
         const current = await loadExisting().catch(() => []);
         for (const preset of presets) {
           try {
-
             const hit = current.find(item => item.name === preset.name);
             if (hit) {
               const merged = { ...hit, id: hit.id };
@@ -10794,7 +10790,6 @@
       .join("");
     chart.querySelectorAll("[data-chart-date]").forEach(node => {
       node.addEventListener("click", () => {
-
         if (node.classList.contains("active")) {
           hideStatsDayDetail();
           return;
@@ -11607,7 +11602,6 @@
       loadMemories().catch(handleError);
     });
     $("#memRows").addEventListener("click", event => {
-
       const clampTarget = event.target.closest("[data-fulltext]");
       if (clampTarget) {
         const inner = clampTarget.querySelector("span:not(.dot)") || clampTarget;

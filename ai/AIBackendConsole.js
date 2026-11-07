@@ -41,7 +41,6 @@ export default class AIBackendConsole {
     if (!text) throw new Error("指令不能为空")
     if (text.length > MAX_COMMAND) throw new Error(`指令过长（最多 ${MAX_COMMAND} 字）`)
     if (this.running) {
-
       const stuckMs = Date.now() - (this._runningSince || 0)
       if (stuckMs < 5 * 60 * 1000) throw new Error("上一条指令还在执行，请稍候")
       Bot.makeLog("warn", [`后台指令卡住 ${Math.round(stuckMs / 1000)} 秒，强制释放`], "WebUI")

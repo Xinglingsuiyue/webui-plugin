@@ -24,7 +24,6 @@ const STOP_CHARS = new Set(
 )
 
 export default class AIToolRegistry {
-
   static tools = new Map()
 
   static sources = new Map()
@@ -144,7 +143,6 @@ export default class AIToolRegistry {
       }
 
       if (AIToolRegistry.sources.has(tool.name)) {
-
         const owner = AIToolRegistry.sources.get(tool.name)?.pluginName || "未知来源"
         AIToolRegistry.stats.skipped++
         Bot.makeLog(
@@ -188,7 +186,6 @@ export default class AIToolRegistry {
     const fnc = AIToolRegistry._sanitizeName(rule.fnc)
     let base = AIToolRegistry._sanitizeName(plugin.name)
     if (!base) {
-
       base = AIToolRegistry._sanitizeName(
         String(key || "")
           .replace(/\.js$/i, "")
@@ -774,7 +771,6 @@ export default class AIToolRegistry {
   static _extractParams(parsed) {
     const schema = { type: "object", properties: {}, required: [] }
     if (!parsed?.groups?.length) {
-
       schema.properties.content = {
         type: "string",
         description: "命令后要附加的内容（路径、文本、关键词等），按工具说明填写",
@@ -1058,7 +1054,6 @@ export default class AIToolRegistry {
     const tokens = AIToolRegistry._tokenize(query)
     const scored = []
     for (const tool of AIToolRegistry.tools.values()) {
-
       const sourceName = String(tool.sourceName || tool.name || "")
       if (sourceName === "tool_search" || tool.name === "tool_search") continue
       if (!AIToolRegistry._isVisible(tool, e, preset)) continue

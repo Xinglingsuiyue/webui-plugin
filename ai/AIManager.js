@@ -36,7 +36,6 @@ function defaultModelFor(channel, aiCfg = {}) {
 }
 
 export default class AIManager {
-
   static sessions = new Map()
 
   static defaultClient = null
@@ -108,7 +107,6 @@ export default class AIManager {
         .filter(item => item.text)
     },
     chat: async (groupId, prompt, botId) => {
-
       const selfId = String(botId || globalThis.Bot?.uin?.[0] || "")
       const result = await AIManager.chat(
         selfId ? `group:${groupId}:bot:${selfId}` : `group:${groupId}`,
@@ -470,7 +468,6 @@ export default class AIManager {
       return candidates
     }
     if (pool.strategy === "roundRobin") {
-
       AIManager._fallbackCursor = ((AIManager._fallbackCursor ?? -1) + 1) % candidates.length
       const start = AIManager._fallbackCursor
       return [...candidates.slice(start), ...candidates.slice(0, start)]
@@ -484,7 +481,6 @@ export default class AIManager {
     if (status === 429 || status === 401 || status === 402 || status === 403) return true
     if (status >= 500) return true
     if (status === 400 || status === 422) {
-
       const text = String(error.message || "")
       return /model|模型|not found|not supported|unsupported|does not exist|invalid model|no available|无可用|不支持|额度|quota|balance|insufficient/i.test(
         text,
@@ -640,7 +636,6 @@ export default class AIManager {
   }
 
   static _applyPreset(session, preset) {
-
     if (preset?.id) {
       session.presetId = String(preset.id)
       session.presetName = String(preset.name || "")
@@ -1417,7 +1412,6 @@ export default class AIManager {
   }
 
   static _passesChatSwitch(e) {
-
     if (e.__backendSessionId || String(e?.user_id || "") === "stdin") return true
     if (e.isPrivate) return AIManager._passesPrivateList(e)
     if (e.isGroup) {
@@ -1470,7 +1464,6 @@ export default class AIManager {
   static getGroupTrigger(groupId, e = null) {
     const group = groupId ? aiAdmin.getGroup(groupId) : null
     if (group) {
-
       const scoped =
         group.triggerKeyword === true
           ? [...AIManager._presetTriggerKeywords(e), ...AIManager._botTriggerKeywords(group, e)]
@@ -1549,7 +1542,6 @@ export default class AIManager {
   }
 
   static _passesTrigger(e) {
-
     if (AIManager._isPokeEvent(e)) return true
     if (e.isPrivate) return true
     if (e.isMaster && cfg.ai?.masterFree !== false) return true
@@ -1736,7 +1728,6 @@ export default class AIManager {
   }
 
   static _plainMessageText(e) {
-
     if (AIManager._isPokeEvent(e)) return AIManager._pokeMessageOf(e)
     const text =
       String(e?.msg || "").trim() ||
@@ -2053,7 +2044,6 @@ export default class AIManager {
       images.push({ mime: item.mime, dataUrl: `data:${item.mime};base64,${item.buffer.toString("base64")}` })
     }
     if (images.length && !AIManager._clientSupportsVision()) {
-
       Bot.makeLog("debug", [`图片已读取 ${images.length} 张，但当前渠道未声明支持图片，已降级为文字提示`], "AIManager")
       return { unsupported: true, count: images.length }
     }
@@ -2272,7 +2262,6 @@ export default class AIManager {
     const selfInfo = await AIManager._selfInfoLine(e, userMessage)
     let userPayload
     if (selfInfo.line) {
-
       const merged = Array.isArray(images) ? images : []
       if (selfInfo.avatar && AIManager._clientSupportsVision()) {
         try {
@@ -2340,7 +2329,6 @@ export default class AIManager {
     }
 
     try {
-
       const maxTools =
         maxToolRounds > 0
           ? Number(aiAdmin.toolConfig.maxToolsPerRequest ?? cfg.ai?.maxToolsPerRequest) || 0
@@ -2480,7 +2468,6 @@ export default class AIManager {
               addUsage(result.usage)
               AIManager._addUsageToSession(session, result.usage)
             } catch (err) {
-
               deferredChunks.unshift(...pendingChunks)
               Bot.makeLog("warn", ["强制搜索失败，按原回复继续", err.message], "AIManager")
             }
@@ -2761,7 +2748,6 @@ export default class AIManager {
     for (const line of lines) {
       const key = line.trim()
       if (!key) {
-
         if (out.length && out[out.length - 1] === "") continue
         out.push("")
         prev = ""
@@ -2932,7 +2918,6 @@ export default class AIManager {
   }
 
   static _formatMemoryEntry(entry, detailed = true, options = {}) {
-
     const hideNumbers = options.hideRelationNumbers === true
 
     const currentPresetId = String(options.currentPresetId || "")
@@ -3607,7 +3592,6 @@ export default class AIManager {
     const kb = AIManager._kbInstance
     if (!kb || typeof kb.search !== "function") return "（暂无）"
     try {
-
       let scopes = ["public"]
       if (e?.user_id) scopes.push(`user:${e.user_id}`)
       if (e?.group_id) scopes.push(`group:${e.group_id}`)
@@ -3764,7 +3748,6 @@ export default class AIManager {
     )
     if (limit > 0) defs = defs.slice(0, limit)
     if (Number.isFinite(budget)) {
-
       while (defs.length > 1 && client.estimateTokens(JSON.stringify(defs)) > budget) {
         const dropIndex = defs.length - 1
         if (dropIndex <= 0) break
@@ -3776,7 +3759,6 @@ export default class AIManager {
   }
 
   static _fitTools(e, toolQuery, preset, client, budget) {
-
     const all = AIToolRegistry.getOpenAITools(e, toolQuery, undefined, preset)
     if (!all.length) return all
     if (!Number.isFinite(budget)) return all
@@ -3862,7 +3844,6 @@ export default class AIManager {
     const now = Date.now()
     let cleaned = 0
     for (const [id, session] of AIManager.sessions) {
-
       if (id.startsWith("backend:")) continue
       const lastMsg = session.messages.at(-1)
       if (!lastMsg || now - lastMsg.time > maxAge) {

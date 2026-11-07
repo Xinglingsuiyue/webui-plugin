@@ -184,7 +184,6 @@ export function registerChatTools(deps = {}) {
       const offset = Math.max(0, Number(args.offset) || 0)
       const roleFilter = String(args.role || "").trim().toLowerCase()
       try {
-
         let rows = []
         const map = await withTimeout(Promise.resolve(group.getMemberMap?.()), MEMBER_TIMEOUT, "获取群成员")
         if (map && typeof map.values === "function") {

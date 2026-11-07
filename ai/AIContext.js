@@ -2,7 +2,6 @@ import AIClient from "./AIClient.js"
 import cfg from "../compat/config.js"
 
 export default class AIContext {
-
   constructor(opts = {}) {
     this.systemPrompt = opts.systemPrompt || ""
     this.runtimeRules = opts.runtimeRules || ""
@@ -260,7 +259,6 @@ export default class AIContext {
       )
 
       if (result?.content) {
-
         const limit = Math.max(200, Number(this._compressionMaxLength) || 800)
 
         let summary = String(result.content)
@@ -296,7 +294,6 @@ export default class AIContext {
   }
 
   _trimContext() {
-
     while (this.tokenCount > this.maxContextTokens && this.messages.length > 2) {
       const idx = this.messages.findIndex(m => m.role !== "system")
       if (idx >= 0) this.messages.splice(idx, 1)

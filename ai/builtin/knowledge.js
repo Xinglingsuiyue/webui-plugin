@@ -46,7 +46,6 @@ function canWriteScope(scope, e) {
 }
 
 export class AiKnowledge {
-
   static async kbSearchTool(args, e) {
     const kb = getKB()
     const scopes = scopesFor(e)

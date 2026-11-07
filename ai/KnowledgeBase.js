@@ -7,7 +7,6 @@ const DAY_MS = 86400000
 const MAX_HISTORY = 5
 
 export default class KnowledgeBase {
-
   static DEFAULT_PATH = path.join(WEBUI_DATA_DIR, "ai_knowledge.json")
 
   static STOPWORDS = new Set([

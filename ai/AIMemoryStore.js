@@ -725,7 +725,6 @@ export default class AIMemoryStore {
       if (current.primary) {
         const base = normalizeEmotion(entry.emotion)
         if (base.primary) {
-
           if (!entry.encodedEmotion?.primary) entry.encodedEmotion = { ...base }
           entry.emotion = {
             primary: base.primary,
@@ -953,7 +952,6 @@ export default class AIMemoryStore {
     if (scope) list = list.filter(entry => entry.scope === scope)
     if (kind) list = list.filter(entry => entry.kind === kind)
     if (query || emotion.primary) {
-
       const terms = query.split(/\s+/).map(term => term.trim()).filter(Boolean)
       const scored = []
       for (const entry of list) {

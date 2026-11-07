@@ -347,7 +347,6 @@
       try {
         window.sessionStorage.setItem(CLIENT_KEY, id);
       } catch (error) {
-
       }
     }
     return id;
@@ -916,7 +915,6 @@
         try {
           controller.abort();
         } catch (error) {
-
         }
         controller = null;
       }

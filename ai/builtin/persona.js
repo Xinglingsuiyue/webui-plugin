@@ -108,7 +108,6 @@ export class AiPersona extends plugin {
 
     if (RESET_WORDS.has(query.toLowerCase())) {
       if (e.isGroup) {
-
         const group = admin().getGroup(e.group_id)
         const selfId = String(e.self_id || "")
         if (selfId && group?.botPresets?.[selfId]) {
@@ -134,7 +133,6 @@ export class AiPersona extends plugin {
 
     let scopedToBot = false
     if (e.isGroup) {
-
       const group = admin().getGroup(e.group_id)
       const selfId = String(e.self_id || "")
       if (selfId && group?.botPresets?.[selfId]) {

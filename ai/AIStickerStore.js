@@ -118,7 +118,6 @@ export default class AIStickerStore {
     const tags = options.tags || []
     let rows = this.entries
     if (options.scopeByPreset !== false) {
-
       if (options.ownOnly === true && tags.length) {
         rows = rows.filter(entry => this._matchesTags(entry, tags))
       } else if (presetId) {
@@ -406,7 +405,6 @@ export default class AIStickerStore {
     const tags = options.tags || []
     let rows = this.entries
     if (options.ownOnly === true && tags.length) {
-
       rows = rows.filter(entry => this._matchesTags(entry, tags))
     } else if (presetId) {
       rows = rows.filter(entry => !entry.presetId || entry.presetId === presetId)
@@ -448,7 +446,6 @@ export default class AIStickerStore {
     const tags = options.tags || []
     let rows = this.entries
     if (ownOnly && tags.length) {
-
       rows = rows.filter(entry => this._matchesTags(entry, tags))
     } else if (presetId) {
       rows = rows.filter(entry => !entry.presetId || entry.presetId === presetId)

@@ -75,7 +75,6 @@ function buildSegments(panel, opts = {}) {
 
 export class WebPanelLogin extends plugin {
   constructor() {
-
     super({
       name: "管理面板登录",
       dsc: "获取 WebUI 管理面板地址与临时登录码",

@@ -112,7 +112,6 @@ export default class AIProactiveChat {
   }
 
   shouldSpeak(groupId, now = Date.now(), botId = "") {
-
     if (!this.isAiEnabled()) return { ok: false, reason: "AI 已关闭" }
     const config = { ...DEFAULT_CONFIG, ...(this.getConfig() || {}) }
 
@@ -178,7 +177,6 @@ export default class AIProactiveChat {
         results.push({ groupId, botId, ...verdict })
         if (!verdict.ok) continue
         try {
-
           const history = await this._recentHistory(groupId)
           if (AIProactiveChat.mentionsOthers(history, botId || this.getSelfId?.())) {
             results[results.length - 1] = { groupId, botId, ok: false, reason: "最近消息在@别人" }
