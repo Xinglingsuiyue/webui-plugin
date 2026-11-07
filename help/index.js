@@ -157,7 +157,7 @@ export class HelpPanel extends plugin {
       return this.reply(
         keyword
           ? `没有找到与「${keyword}」相关的功能。`
-          : "帮助面板还没有内容，可在 config/config/help.yaml 中配置。",
+          : "帮助面板还没有内容，可在 plugins/webui-plugin/config/config/help.yaml 中配置。",
         true,
       )
     }

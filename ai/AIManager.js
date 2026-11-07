@@ -242,7 +242,7 @@ export default class AIManager {
     AIManager.defaultClient = AIManager._buildClient()
 
     if (cfg.ai?.enabled !== true) {
-      Bot.makeLog("info", "AI 模块未启用，跳过初始化（config/config/ai.yaml）", "AIManager")
+      Bot.makeLog("info", "AI 模块未启用，跳过初始化（plugins/webui-plugin/config/config/ai.yaml）", "AIManager")
       return false
     }
 

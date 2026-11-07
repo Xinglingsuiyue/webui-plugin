@@ -171,7 +171,7 @@ function requireAuth(req, res, next) {
     return res.status(403).json({ error: "forbidden", message: "未配置访问令牌，WebUI 仅允许从本机访问" })
   return res.status(401).json({
     error: "unauthorized",
-    message: opts.token ? "访问令牌无效" : "请从本机访问，或在 config/config/webui.yaml 配置访问令牌",
+    message: opts.token ? "访问令牌无效" : "请从本机访问，或在 plugins/webui-plugin/config/config/webui.yaml 配置访问令牌",
   })
 }
 
@@ -180,7 +180,7 @@ function requireWrite(req, res, next) {
   if (!opts.allowWrite)
     return res.status(403).json({
       error: "read_only",
-      message: "WebUI 当前为只读模式（config/config/webui.yaml: allowWrite: false）",
+      message: "WebUI 当前为只读模式（plugins/webui-plugin/config/config/webui.yaml: allowWrite: false）",
     })
   if (req.get("x-webui-request") !== "1")
     return res.status(400).json({ error: "invalid_request", message: "缺少 WebUI 请求标识" })
@@ -3206,7 +3206,7 @@ function buildApp(opts) {
 export function mountWebUI() {
   const opts = getOptions()
   if (!opts.enable) {
-    Bot.makeLog("info", "WebUI 已禁用（config/config/webui.yaml: enable: false）", "WebUI")
+    Bot.makeLog("info", "WebUI 已禁用（plugins/webui-plugin/config/config/webui.yaml: enable: false）", "WebUI")
     return { basePath: null, dispose() {} }
   }
 

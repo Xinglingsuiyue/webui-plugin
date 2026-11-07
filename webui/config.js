@@ -2,12 +2,18 @@ import fs from "node:fs"
 import path from "node:path"
 import YAML from "yaml"
 import { pathToFileURL } from "node:url"
-import cfg from "../compat/config.js"
+import cfg, {
+  invalidatePluginConfig,
+  pluginConfigFile,
+  pluginDefaultFile as shippedDefaultFile,
+} from "../compat/config.js"
 import { pendingRemovalNames } from "./pluginPendingRemove.js"
 
 const CONFIG_DIR = path.join(process.cwd(), "config/config")
 const DEFAULT_CONFIG_DIR = path.join(process.cwd(), "config/default_config")
 const PLUGINS_DIR = path.join(process.cwd(), "plugins")
+
+const PLUGIN_LIVE_NAMES = new Set(["ai", "webui", "help"])
 
 const SKIP = Symbol("skip")
 const SECRET_RE =
@@ -241,6 +247,27 @@ export function invalidateConfigCache(name) {
     delete store[`config.${name}`]
     delete store[`default_config.${name}`]
   } catch {}
+  if (PLUGIN_LIVE_NAMES.has(name)) invalidatePluginConfig(name)
+}
+
+/** ai/webui/help 以插件自己的 config/config 为准，核心目录仅作兜底 */
+function liveConfigFile(name) {
+  return PLUGIN_LIVE_NAMES.has(name) ? pluginConfigFile(name) : path.join(CONFIG_DIR, `${name}.yaml`)
+}
+
+function ensureLiveConfigFile(name) {
+  const file = liveConfigFile(name)
+  if (!file || fs.existsSync(file)) return file
+  const source = [path.join(CONFIG_DIR, `${name}.yaml`), path.join(DEFAULT_CONFIG_DIR, `${name}.yaml`)].find(item =>
+    fs.existsSync(item),
+  )
+  if (source) {
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      fs.copyFileSync(source, file)
+    } catch {}
+  }
+  return file
 }
 
 function extractComments(text) {
@@ -478,20 +505,26 @@ function fileMeta(name, file) {
 }
 
 function coreFileNames() {
-  if (!fs.existsSync(CONFIG_DIR)) return []
-  return fs
-    .readdirSync(CONFIG_DIR)
-    .filter(name => name.endsWith(".yaml") && !name.slice(0, -5).includes("."))
-    .map(name => name.slice(0, -5))
+  const names = new Set(PLUGIN_LIVE_NAMES)
+  try {
+    for (const name of fs.readdirSync(CONFIG_DIR))
+      if (name.endsWith(".yaml") && !name.slice(0, -5).includes(".")) names.add(name.slice(0, -5))
+  } catch {}
+  return [...names]
 }
 
 function coreFilePath(name) {
   if (!/^[A-Za-z0-9_-]+$/.test(String(name || ""))) throw new ConfigError("配置文件名无效")
   if (!coreFileNames().includes(name)) throw new ConfigError("配置文件不存在", 404)
+  if (PLUGIN_LIVE_NAMES.has(name)) return ensureLiveConfigFile(name)
   return path.join(CONFIG_DIR, `${name}.yaml`)
 }
 
 function defaultFilePath(name) {
+  if (PLUGIN_LIVE_NAMES.has(name)) {
+    const file = shippedDefaultFile(name)
+    return file && fs.existsSync(file) ? file : null
+  }
   const file = path.join(DEFAULT_CONFIG_DIR, `${name}.yaml`)
   return fs.existsSync(file) ? file : null
 }
@@ -499,14 +532,14 @@ function defaultFilePath(name) {
 export function listConfigFiles() {
   const names = coreFileNames()
   const has = name => names.includes(name)
-  const basic = CORE_ORDER.filter(name => has(name) && !HIDDEN_BASIC.has(name)).map(name => fileMeta(name, path.join(CONFIG_DIR, `${name}.yaml`)))
+  const basic = CORE_ORDER.filter(name => has(name) && !HIDDEN_BASIC.has(name)).map(name => fileMeta(name, liveConfigFile(name)))
   const basicSet = new Set([...CORE_ORDER, ...OTHER_ORDER, "group"])
   const others = [
-    ...OTHER_ORDER.filter(name => has(name) && !HIDDEN_OTHER.has(name)).map(name => fileMeta(name, path.join(CONFIG_DIR, `${name}.yaml`))),
+    ...OTHER_ORDER.filter(name => has(name) && !HIDDEN_OTHER.has(name)).map(name => fileMeta(name, liveConfigFile(name))),
     ...names
       .filter(name => !basicSet.has(name) && !HIDDEN_OTHER.has(name))
       .sort((a, b) => a.localeCompare(b, "zh-CN"))
-      .map(name => fileMeta(name, path.join(CONFIG_DIR, `${name}.yaml`))),
+      .map(name => fileMeta(name, liveConfigFile(name))),
   ]
 
   return {
@@ -543,7 +576,9 @@ export function readCoreConfig(name) {
   const meta = fileMeta(name, file)
   return {
     ...meta,
-    path: `config/config/${name}.yaml`,
+    path: PLUGIN_LIVE_NAMES.has(name)
+      ? `plugins/webui-plugin/config/config/${name}.yaml`
+      : `config/config/${name}.yaml`,
     note:
       name === "ai"
         ? "保存后无需重启，下一轮对话即按新设置运行。"
@@ -1043,6 +1078,7 @@ function pluginEntries() {
   for (const dirent of fs.readdirSync(PLUGINS_DIR, { withFileTypes: true })) {
     if (!dirent.isDirectory() || dirent.name.startsWith(".")) continue
     if (pendingRemove.has(dirent.name)) continue
+    if (dirent.name === "webui-plugin") continue
     const pluginDir = path.join(PLUGINS_DIR, dirent.name)
     const hasGuoba = fs.existsSync(path.join(pluginDir, "guoba.support.js"))
     const configs = []
@@ -1194,7 +1230,11 @@ function resolvePluginConfig(pluginKey, id) {
 function pluginDefaultFile(pluginDir, rel) {
   let candidate = null
   if (rel.startsWith("config/config/")) {
-    candidate = path.join(pluginDir, "config", path.basename(rel).replace(/\.yaml$/, "_default.yaml"))
+    const base = path.basename(rel)
+    const legacy = path.join(pluginDir, "config", base.replace(/\.yaml$/, "_default.yaml"))
+    const shipped = path.join(pluginDir, "config", "default_config", base)
+    if (fs.existsSync(legacy)) candidate = legacy
+    else if (fs.existsSync(shipped)) candidate = shipped
   } else if (rel.startsWith("config/")) {
     candidate = path.join(pluginDir, "config", "default_config", path.basename(rel))
   }

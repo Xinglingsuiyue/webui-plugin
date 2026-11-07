@@ -23,7 +23,7 @@ git clone --depth=1 https://github.com/Xinglingsuiyue/webui-plugin.git
 #云崽登录
 ```
 
-拿到带一次性登录码的面板地址，浏览器打开即可。默认只允许本机访问，外网访问需在 `config/config/webui.yaml` 填写 `token` 或配置反代地址。
+拿到带一次性登录码的面板地址，浏览器打开即可。默认只允许本机访问，外网访问需在 `plugins/webui-plugin/config/config/webui.yaml` 填写 `token` 或配置反代地址。
 
 ## 功能
 
@@ -35,7 +35,7 @@ git clone --depth=1 https://github.com/Xinglingsuiyue/webui-plugin.git
 
 内置预设「大肥鱼」。
 
-**帮助面板**：`#帮助`。配置在 `config/config/help.yaml`，可在 WebUI 里点选编辑并预览。
+**帮助面板**：`#帮助`。配置在 `plugins/webui-plugin/config/config/help.yaml`，可在 WebUI 里点选编辑并预览。
 
 **状态图**：`#状态` 以图片展示运行状态，`#状态 pro` 查看全部账号（默认仅主人，可在 WebUI 放开）。
 
@@ -56,9 +56,11 @@ git clone --depth=1 https://github.com/Xinglingsuiyue/webui-plugin.git
 
 | 文件 | 内容 |
 | ---- | ---- |
-| `config/config/webui.yaml` | 面板路径、令牌、登录指令、状态图清晰度 |
-| `config/config/ai.yaml` | AI 开关、上下文、触发方式、工具与知识库 |
-| `config/config/help.yaml` | 帮助面板标题、外观、皮肤、分组 |
+| `plugins/webui-plugin/config/config/webui.yaml` | 面板路径、令牌、登录指令、状态图清晰度 |
+| `plugins/webui-plugin/config/config/ai.yaml` | AI 开关、上下文、触发方式、工具与知识库 |
+| `plugins/webui-plugin/config/config/help.yaml` | 帮助面板标题、外观、皮肤、分组 |
+
+上面三份由插件首次加载时从 `config/default_config` 生成到插件目录，缺失也会自动补回；核心其余配置仍在 `config/config`。
 
 数据统一存放在 `data/webui/`。
 

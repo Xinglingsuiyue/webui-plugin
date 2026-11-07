@@ -1,8 +1,9 @@
 import fs from "node:fs"
 import path from "node:path"
 import { WEBUI_DATA_DIR } from "../webui/dataDir.js"
+import { pluginConfigFile } from "../compat/config.js"
 
-const CONFIG_FILE = path.join(process.cwd(), "config", "config", "help.yaml")
+const CONFIG_FILE = pluginConfigFile("help")
 const BACKUP_DIR = path.join(WEBUI_DATA_DIR, "help-backups")
 const NAME_RE = /^help-\d{8}-\d{6}(?:-\d)?\.yaml$/
 const MAX_BACKUPS = 100

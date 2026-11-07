@@ -48,7 +48,7 @@ function buildSegments(panel, opts = {}) {
   }
   if (opts.onlyCustom) {
     if (panel.custom.length) push("自定义地址", panel.custom)
-    else segments.push("已启用「只发送自定义地址」，但 config/config/webui.yaml 里还没填 customAddresses。")
+    else segments.push("已启用「只发送自定义地址」，但 plugins/webui-plugin/config/config/webui.yaml 里还没填 customAddresses。")
   } else {
     push("自定义地址", panel.custom)
 
@@ -90,7 +90,7 @@ export class WebPanelLogin extends plugin {
     if (e.isMaster !== true) return this.reply("这个指令只有主人能用。", true)
 
     const webui = cfg.webui || {}
-    if (webui.enable === false) return this.reply("WebUI 已在 config/config/webui.yaml 中关闭。", true)
+    if (webui.enable === false) return this.reply("WebUI 已在 plugins/webui-plugin/config/config/webui.yaml 中关闭。", true)
 
     const customHosts = Array.isArray(webui.customAddresses)
       ? webui.customAddresses.map(item => String(item || "").trim()).filter(Boolean)

@@ -9,6 +9,7 @@ const SHIPPED_DEFAULT_DIR = path.join(PLUGIN_ROOT, "config", "default_config")
 
 const CORE_CONFIG_DIR = path.resolve(process.cwd(), "config/config")
 const CORE_DEFAULT_DIR = path.resolve(process.cwd(), "config/default_config")
+const PLUGIN_CONFIG_DIR = path.join(PLUGIN_ROOT, "config", "config")
 
 const PLUGIN_CONFIGS = new Set(["ai", "webui", "help"])
 
@@ -45,11 +46,6 @@ function configSources() {
       if (fs.statSync(source).isFile()) sources.set(file, source)
     }
   } catch {}
-  for (const name of PLUGIN_CONFIGS) {
-    const file = `${name}.yaml`
-    const source = path.join(SHIPPED_DEFAULT_DIR, file)
-    if (fs.existsSync(source)) sources.set(file, source)
-  }
   return sources
 }
 
@@ -68,10 +64,57 @@ function ensureConfigFiles() {
 
 ensureConfigFiles()
 
+export function pluginConfigFile(name) {
+  return PLUGIN_CONFIGS.has(name) ? path.join(PLUGIN_CONFIG_DIR, `${name}.yaml`) : null
+}
+
+export function pluginDefaultFile(name) {
+  return PLUGIN_CONFIGS.has(name) ? path.join(SHIPPED_DEFAULT_DIR, `${name}.yaml`) : null
+}
+
+/** 插件自己的 config/config 只放 ai/webui/help，首次以核心现值为底生成 */
+function ensurePluginConfigFiles() {
+  for (const name of PLUGIN_CONFIGS) {
+    const target = pluginConfigFile(name)
+    if (!target || fs.existsSync(target)) continue
+    const live = path.join(CORE_CONFIG_DIR, `${name}.yaml`)
+    const shipped = path.join(SHIPPED_DEFAULT_DIR, `${name}.yaml`)
+    const source = fs.existsSync(live) ? live : fs.existsSync(shipped) ? shipped : null
+    if (!source) continue
+    try {
+      fs.mkdirSync(PLUGIN_CONFIG_DIR, { recursive: true })
+      fs.copyFileSync(source, target)
+    } catch {}
+  }
+}
+
+ensurePluginConfigFiles()
+
+const pluginLiveCache = new Map()
+
+function pluginLiveConfig(name) {
+  const file = pluginConfigFile(name)
+  if (!file) return {}
+  try {
+    const mtime = fs.statSync(file).mtimeMs
+    const hit = pluginLiveCache.get(name)
+    if (hit && hit.mtime === mtime) return hit.value
+    const value = readYamlFileSync(file)
+    pluginLiveCache.set(name, { mtime, value })
+    return value
+  } catch {
+    return {}
+  }
+}
+
+export function invalidatePluginConfig(name) {
+  pluginLiveCache.delete(name)
+}
+
 function getAllCfg(name) {
   const base = coreCfg.getAllCfg(name) || {}
   if (!PLUGIN_CONFIGS.has(name)) return base
-  return { ...shippedDefaults(name), ...base }
+  return { ...shippedDefaults(name), ...base, ...pluginLiveConfig(name) }
 }
 
 export function readYamlFile(type, name) {
@@ -127,11 +170,12 @@ const shim = {
 export default new Proxy(shim, {
   get(target, prop) {
     if (prop in target) return target[prop]
+    if (typeof prop !== "string") return undefined
+    if (PLUGIN_CONFIGS.has(prop)) return getAllCfg(prop)
 
     const value = coreCfg[prop]
     if (typeof value === "function") return value.bind(coreCfg)
     if (value !== undefined) return value
-    if (typeof prop !== "string") return undefined
     return getAllCfg(prop)
   },
   has(target, prop) {
