@@ -3,7 +3,7 @@ import path from "node:path"
 import fs from "node:fs/promises"
 import { execFile } from "node:child_process"
 import { fileURLToPath } from "node:url"
-import Renderer from "../../../lib/renderer/loader.js"
+import { render as renderImage } from "../compat/renderer.js"
 import cfg from "../compat/config.js"
 import { isBotOnline } from "../compat/bots.js"
 
@@ -978,7 +978,7 @@ export async function renderStatusImage(e, options) {
 
   const scales = [statusImageScale(), 1].filter((value, index, arr) => arr.indexOf(value) === index)
   for (const scale of scales) {
-    const image = await Renderer.render("status/status", {
+    const image = await renderImage("status/status", {
       tplFile,
       saveId: "status",
       ...data,

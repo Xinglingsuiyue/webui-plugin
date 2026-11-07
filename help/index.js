@@ -1,7 +1,7 @@
 import fs from "node:fs"
 import template from "art-template"
 import plugin from "../../../lib/plugins/plugin.js"
-import Renderer from "../../../lib/renderer/loader.js"
+import { render as renderImage } from "../compat/renderer.js"
 import { fileURLToPath } from "node:url"
 import { getHelpConfig, normalizeHelpConfig, buildHelpGroups, helpText, helpFooterText, HELP_VERSION } from "./HelpConfig.js"
 import { getThemeData } from "./HelpTheme.js"
@@ -116,7 +116,7 @@ export async function renderHelpPanel({ keyword = "", isMaster = true } = {}) {
   }
 
   const image =
-    (await Renderer.render("help/panel", {
+    (await renderImage("help/panel", {
       tplFile,
       saveId: "panel",
       imgType: "png",
