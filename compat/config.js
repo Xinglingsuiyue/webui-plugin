@@ -72,7 +72,6 @@ export function pluginDefaultFile(name) {
   return PLUGIN_CONFIGS.has(name) ? path.join(SHIPPED_DEFAULT_DIR, `${name}.yaml`) : null
 }
 
-/** 插件自己的 config/config 只放 ai/webui/help，首次以核心现值为底生成 */
 function ensurePluginConfigFiles() {
   for (const name of PLUGIN_CONFIGS) {
     const target = pluginConfigFile(name)

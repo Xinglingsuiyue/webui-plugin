@@ -250,7 +250,6 @@ export function invalidateConfigCache(name) {
   if (PLUGIN_LIVE_NAMES.has(name)) invalidatePluginConfig(name)
 }
 
-/** ai/webui/help 以插件自己的 config/config 为准，核心目录仅作兜底 */
 function liveConfigFile(name) {
   return PLUGIN_LIVE_NAMES.has(name) ? pluginConfigFile(name) : path.join(CONFIG_DIR, `${name}.yaml`)
 }
