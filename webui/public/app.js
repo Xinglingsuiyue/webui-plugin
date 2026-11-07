@@ -407,6 +407,7 @@
     const iconName = kind === "error" ? "alert" : kind === "info" ? "info" : "check";
     const heading = title || (kind === "error" ? "操作失败" : kind === "info" ? "提示" : "操作成功");
     el.innerHTML = `<span class="t-icon">${icon(iconName)}</span><div><strong>${esc(heading)}</strong><p>${esc(message)}</p></div>`;
+    for (const old of [...layer.children]) old.remove();
     layer.appendChild(el);
     window.setTimeout(() => {
       el.style.transition = "opacity .2s ease, transform .2s ease";
@@ -414,7 +415,6 @@
       el.style.transform = "translateY(-4px)";
       window.setTimeout(() => el.remove(), 240);
     }, 3400);
-    while (layer.children.length > 5) layer.firstElementChild.remove();
   }
 
   function handleError(error) {
@@ -5254,20 +5254,6 @@
     }
   }
 
-  async function refreshConfigPage(view, button) {
-    setBusy(button, true);
-    try {
-      if (view === "basic" || view === "other") await loadCoreConfigPage(view, true);
-      else if (view === "group") await loadGroupConfigPage(true);
-      else await loadPluginConfigPage(true);
-      toast("配置已刷新", "info");
-    } catch (error) {
-      handleError(error);
-    } finally {
-      setBusy(button, false);
-    }
-  }
-
   function addConfigTag(input) {
     const value = input.value.trim();
     if (!value) return;
@@ -5484,12 +5470,6 @@
   }
 
   function initConfigPages() {
-    const bindRefresh = (id, view) => {
-      const button = $(id);
-      if (button) button.addEventListener("click", () => refreshConfigPage(view, button));
-    };
-    bindRefresh("#configPluginRefresh", "plugin");
-
     $("#groupCfgApply").addEventListener("click", applyGroupSelection);
     $("#groupCfgRemove").addEventListener("click", removeGroupScope);
     $$(".config-combo[data-combo-kind]").forEach(setupGroupCombo);
@@ -7486,6 +7466,7 @@
         hint: "轮询最均衡；权重适合按额度分配；最少使用会自动避开高频 Key；故障转移只在失败时切换",
       },
       { key: "stream", label: "流式输出", type: "switch", default: false, hint: "边生成边分段发送；仅 OpenAI Chat 格式生效" },
+      { key: "supportsImages", label: "图片输入", type: "switch", default: false, hint: "该渠道的模型能看懂图片时开启，未开启时图片只按文字提示处理" },
       { key: "models", label: "模型列表", type: "models", wide: true },
       { key: "model", label: "默认模型", type: "channel-default" },
       { key: "priority", label: "优先级", type: "number", hint: "数字越大越优先" },
