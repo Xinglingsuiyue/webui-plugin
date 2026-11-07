@@ -133,6 +133,16 @@ export class WebPanelLogin extends plugin {
 
 const UPDATE_RULE = [{ reg: "^#webui\\s*(强制)?\\s*更新$", fnc: "update" }]
 
+async function restartBot() {
+  await new Promise(resolve => setTimeout(resolve, 1200))
+  try {
+    if (typeof Bot.restart === "function") return await Bot.restart()
+    if (typeof Bot.exit === "function") return await Bot.exit()
+  } catch (err) {
+    Bot.makeLog("warn", ["自动重启失败，请手动重启", err?.message || err], "WebUI")
+  }
+}
+
 export class WebPanelUpdate extends plugin {
   constructor() {
     super({
@@ -147,25 +157,30 @@ export class WebPanelUpdate extends plugin {
   }
 
   async update() {
-    if (this.e.isMaster !== true) return this.reply("这个指令只有主人能用。", true)
+    if (this.e.isMaster !== true) return this.reply("这个指令只有主人能用。")
 
     const force = /强制/.test(String(this.e.msg || ""))
-    await this.reply(force ? "正在强制更新 webui-plugin，稍等…" : "正在更新 webui-plugin，稍等…", true)
+    await this.reply(force ? "正在强制更新 webui-plugin，稍等…" : "正在更新 webui-plugin，稍等…")
+
+    let result
     try {
-      const result = await updateSelf({ force })
-      if (result.upToDate) return this.reply("webui-plugin 已是最新版本。", true)
-      const list = [...(result.updated || []), ...(result.removed || [])].slice(0, 20)
-      const body = []
-      if (result.total) body.push(`webui-plugin 已更新 ${result.total} 个文件`)
-      else body.push("webui-plugin 本地改动已恢复为上游版本")
-      if (result.discarded) body.push(`已放弃本地改动 ${result.discarded} 处`)
-      body.push("重启 Bot 后生效", "")
-      body.push(...list.map(file => `· ${file}`))
-      if (result.total > list.length) body.push(`…另有 ${result.total - list.length} 个文件`)
-      return this.reply(body.join("\n").trim(), true)
+      result = await updateSelf({ force })
     } catch (err) {
       const message = err instanceof PluginManagerError ? err.message : `更新失败：${err?.message || err}`
-      return this.reply(message, true)
+      return this.reply(message)
     }
+
+    if (result.upToDate) return this.reply("webui-plugin 已是最新版本。")
+
+    const list = [...(result.updated || []), ...(result.removed || [])].slice(0, 20)
+    const body = []
+    if (result.total) body.push(`webui-plugin 已更新 ${result.total} 个文件`)
+    else body.push("webui-plugin 本地改动已恢复为上游版本")
+    if (result.discarded) body.push(`已放弃本地改动 ${result.discarded} 处`)
+    body.push("正在重启生效", "")
+    body.push(...list.map(file => `· ${file}`))
+    if (result.total > list.length) body.push(`…另有 ${result.total - list.length} 个文件`)
+    await this.reply(body.join("\n").trim())
+    await restartBot()
   }
 }
