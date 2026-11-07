@@ -43,7 +43,7 @@ const RESTART_REQUIRED = new Set(["webui", "server", "redis", "db", "renderer", 
 const PROTECTED_WEBUI_FIELDS = new Set(["enable", "path", "token", "allowWrite"])
 
 const MANAGED_ELSEWHERE = {
-  webui: new Set(["statusImageScale", "statusProForAll"]),
+  webui: new Set(["statusImageScale", "statusImageWidth", "statusProForAll"]),
 }
 
 const CORE_TYPE_OVERRIDES = {

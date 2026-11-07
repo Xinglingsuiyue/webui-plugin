@@ -20,6 +20,7 @@ const RING_PERIMETER = 3.14 * (RING_W - RING_GAP - RING_STROKE)
 
 const PLATFORM_NAME = { win32: "Windows", linux: "Linux", darwin: "macOS" }
 
+
 function execText(command, args, timeout = 8000) {
   return new Promise(resolve => {
     execFile(command, args, { timeout, maxBuffer: 8 * 1024 * 1024, encoding: "buffer" }, (err, stdout) => {
@@ -112,25 +113,125 @@ async function collectCpuLoad() {
   return cpuUsage(300)
 }
 
-function cpuUsage(sampleMs = 300) {
-  return new Promise(resolve => {
-    const start = os.cpus().map(cpu => cpu.times)
-    setTimeout(() => {
-      const now = os.cpus().map(cpu => cpu.times)
-      let idle = 0
-      let total = 0
-      for (let i = 0; i < start.length; i++) {
-        for (const key of Object.keys(start[i])) total += now[i][key] - start[i][key]
-        idle += now[i].idle - start[i].idle
-      }
-      resolve(total > 0 ? (1 - idle / total) * 100 : 0)
-    }, sampleMs)
-  })
+async function cpuUsage(sampleMs = 300) {
+  const start = await cpuSnapshot()
+  await sleep(sampleMs)
+  const now = await cpuSnapshot()
+  if (!start || !now) return await selfCpuPercent()
+  let idle = now.idle - start.idle
+  let total = now.total - start.total
+  if (!(total > 0) || idle < 0 || total < idle) return await selfCpuPercent()
+  return Math.max(0, Math.min(100, (1 - idle / total) * 100))
 }
+
+async function cpuSnapshot() {
+  const fromProc = await readProcStat()
+  if (fromProc) return fromProc
+  return readNodeCpuTimes()
+}
+
+function readNodeCpuTimes() {
+  let list
+  try {
+    list = os.cpus()
+  } catch {
+    return null
+  }
+  if (!Array.isArray(list) || !list.length) return null
+  let idle = 0
+  let total = 0
+  for (const cpu of list) {
+    const times = cpu?.times || {}
+    for (const value of Object.values(times)) total += Number(value) || 0
+    idle += Number(times.idle) || 0
+  }
+  return total > 0 ? { idle, total, elapsed: process.hrtime.bigint() } : null
+}
+
+async function readProcStat() {
+  try {
+    const text = await fs.readFile("/proc/stat", "utf8")
+    const line = text.split("\n").find(row => row.startsWith("cpu "))
+    if (!line) return null
+    const nums = line.trim().split(/\s+/).slice(1).map(Number)
+    if (nums.length < 4 || nums.some(value => !Number.isFinite(value))) return null
+    const idle = (nums[3] || 0) + (nums[4] || 0)
+    const total = nums.reduce((sum, value) => sum + value, 0)
+    return total > 0 ? { idle, total, elapsed: process.hrtime.bigint() } : null
+  } catch {
+    return null
+  }
+}
+
+let selfCpuBaseline = null
+let lastSelfUsage = 0
+async function selfCpuPercent() {
+  const usage = process.cpuUsage()
+  const nowNs = process.hrtime.bigint()
+  const point = { cpuNs: (usage.user + usage.system) * 1000, wallNs: nowNs }
+  if (!selfCpuBaseline) {
+    selfCpuBaseline = point
+    return lastSelfUsage
+  }
+  const wallNs = Number(point.wallNs - selfCpuBaseline.wallNs)
+  const cpuNs = point.cpuNs - selfCpuBaseline.cpuNs
+  selfCpuBaseline = point
+  if (!(wallNs > 0)) return lastSelfUsage
+  const cores = await cpuCount()
+  const percent = Math.max(0, Math.min(100 * cores, (cpuNs / wallNs) * 100))
+  lastSelfUsage = percent
+  return percent
+}
+
+let cachedProcCpu = null
+async function readProcCpuInfo() {
+  if (cachedProcCpu) return cachedProcCpu
+  const info = { cores: 0, model: "", mhz: 0 }
+  try {
+    const text = await fs.readFile("/proc/cpuinfo", "utf8")
+    info.cores = (text.match(/^processor\s*:/gm) || []).length
+    const field = names => {
+      for (const name of names) {
+        const matched = text.match(new RegExp(`^\\s*${name}\\s*:\\s*(.+)$`, "m"))
+        if (matched) return matched[1].trim()
+      }
+      return ""
+    }
+    info.model = field(["Hardware", "model name", "Processor", "cpu model"])
+    info.mhz = Number(field(["cpu MHz", "clock"])) || 0
+  } catch {}
+  cachedProcCpu = info
+  return info
+}
+
+async function readCpuFreq() {
+  try {
+    const text = await fs.readFile("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq", "utf8")
+    const khz = Number(text.trim())
+    if (khz > 0) return khz / 1000
+  } catch {}
+  return 0
+}
+
+let cachedCpuCount = 0
+async function cpuCount() {
+  if (cachedCpuCount > 0) return cachedCpuCount
+  let count = 0
+  try {
+    count = os.cpus()?.length || 0
+  } catch {}
+  const info = await readProcCpuInfo()
+  if (info.cores > count) count = info.cores
+  if (!count) count = Number(process.env.NUMBER_OF_PROCESSORS) || Number(process.env.NUM) || 1
+  cachedCpuCount = Math.max(1, count)
+  return cachedCpuCount
+}
+
 
 function shortCpuName(name) {
   return String(name || "")
     .replace(/\((R|TM|C)\)/gi, "")
+    .replace(/Qualcomm\s+Technologies,?\s*Inc\.?/gi, "Qualcomm")
     .replace(/\b(GenuineIntel|AuthenticAMD|Intel|AMD)\b/gi, "")
     .replace(/\bCPU\b|\bProcessor\b/gi, "")
     .replace(/@.*$/, "")
@@ -141,6 +242,8 @@ function shortCpuName(name) {
 function cpuManufacturer(name) {
   if (/intel/i.test(name)) return "Intel"
   if (/amd/i.test(name)) return "AMD"
+  if (/qualcomm/i.test(name)) return "Qualcomm"
+  if (/mediatek/i.test(name)) return "MediaTek"
   return String(name || "").split(/\s+/)[0] || "未知"
 }
 
@@ -226,18 +329,37 @@ async function collectSystemInfo() {
   }
 }
 
+let cachedOsRelease = null
+async function readOsRelease() {
+  if (cachedOsRelease) return cachedOsRelease
+  let name = ""
+  try {
+    const text = await fs.readFile("/etc/os-release", "utf8")
+    const field = key => text.match(new RegExp(`^${key}=(.*)$`, "m"))?.[1]?.replace(/^"|"$/g, "").trim() || ""
+    name = (field("PRETTY_NAME") || [field("NAME"), field("VERSION_ID")].filter(Boolean).join(" "))
+      .replace(/\s+Linux$/i, "")
+  } catch {}
+  cachedOsRelease = { name }
+  return cachedOsRelease
+}
+
 async function collectSystemInfoUnix() {
-  const [release, meminfo] = await Promise.all([
+  const [release, machine, meminfo, releaseInfo] = await Promise.all([
     execText("uname", ["-r"]),
+    execText("uname", ["-m"]),
     fs.readFile("/proc/meminfo", "utf8").catch(() => ""),
+    readOsRelease(),
   ])
   const pick = key => Number(String(meminfo).match(new RegExp(`${key}:\\s+(\\d+)`))?.[1] || 0) * 1024
-  const cpuName = os.cpus()[0]?.model || ""
-  const cpuMhz = os.cpus()[0]?.speed || 0
+  const procCpu = await readProcCpuInfo()
+  const nodeCpu = os.cpus()?.[0]
+  const cpuName = procCpu.model || nodeCpu?.model || ""
+  const cpuMhz = procCpu.mhz || nodeCpu?.speed || (await readCpuFreq())
+  const cores = await cpuCount()
   return {
     osName: PLATFORM_NAME[process.platform] || process.platform,
-    osCaption: "",
-    osVersion: os.release(),
+    osCaption: releaseInfo.name,
+    osVersion: machine.trim() || os.arch(),
     kernel: release.trim() || os.release(),
     host: os.hostname(),
     board: "",
@@ -251,12 +373,13 @@ async function collectSystemInfoUnix() {
       name: cpuName,
       shortName: shortCpuName(cpuName),
       manufacturer: cpuManufacturer(cpuName),
-      cores: os.cpus().length,
-      threads: os.cpus().length,
+      cores,
+      threads: cores,
       speed: cpuMhz >= 1000 ? `${(cpuMhz / 1000).toFixed(1)}GHz` : cpuMhz ? `${cpuMhz}MHz` : "",
     },
   }
 }
+
 
 async function collectDisks() {
   if (IS_WIN) {
@@ -307,6 +430,7 @@ function buildDisk(mount, type, total, free, usedBytes) {
     dash: progress.dash,
   }
 }
+
 
 async function collectRedis() {
   const client = globalThis.redis
@@ -371,6 +495,7 @@ async function collectRedis() {
     return null
   }
 }
+
 
 const PROCESS_COLUMNS = ["ProcessId", "Name", "KernelModeTime", "UserModeTime", "WorkingSetSize"]
 
@@ -522,6 +647,7 @@ async function collectProcessUnix() {
   }
 }
 
+
 const SAMPLE_MS = 10000
 const HISTORY_MAX = 36
 
@@ -574,7 +700,7 @@ async function readNetTotals() {
 
 async function updateNetwork() {
   const totals = await readNetTotals()
-  if (!totals) return { down: 0, up: 0, rx: 0, tx: 0 }
+  if (!totals || (!totals.rx && !totals.tx)) return null
   const now = Date.now()
   let down = 0
   let up = 0
@@ -617,6 +743,7 @@ function startMonitor() {
   monitorTick()
 }
 
+
 function buildChart(history) {
   if (history.length < 3) return null
   const width = 600
@@ -646,6 +773,7 @@ function buildSpark(history) {
   })
   return points.join(" ")
 }
+
 
 async function fetchAvatar(uin) {
   if (!uin) return ""
@@ -698,9 +826,7 @@ export function botProtocol(bot) {
   const version = bot?.version || {}
   const appName = version.app_name || version.name || adapter.name || ""
   const appVersion = version.app_version || ""
-
   const raw = String(version.version || "").trim()
-
   const matched = raw.match(/^(.*?)\s*v?(\d+(?:\.\d+)*)(?:[-+][\w.-]+)?$/)
   let name = (matched ? matched[1] : raw) || appName
   let number = matched ? matched[2] : appVersion
@@ -738,7 +864,6 @@ function findBot(id) {
 function pickBot(e) {
   const selfId = e?.self_id ? String(e.self_id) : ""
   if (selfId && findBot(selfId)) return { uin: selfId, bot: findBot(selfId) }
-
   for (const id of Bot.uin || []) {
     const key = String(id)
     if (!(Number(key) > 0)) continue
@@ -746,6 +871,7 @@ function pickBot(e) {
   }
   return { uin: "", bot: null }
 }
+
 
 function listBots(e) {
   const list = []
@@ -759,7 +885,6 @@ function listBots(e) {
 
 async function botCard(uin, bot, avatar) {
   const stats = botStats(bot)
-
   const core = await coreMsgCounts(uin)
   if (core) {
     stats.recv = core.recv
@@ -792,14 +917,16 @@ export async function collectGauges() {
   const [cpuPercent, disks] = await Promise.all([collectCpuLoad(), collectDisks()])
   const ramPercent = (ramUsed / Math.max(1, ramTotal)) * 100
   const nodePercent = (memory.rss / Math.max(1, ramUsed)) * 100
-  const cpuName = shortCpuName(os.cpus()[0]?.model || "")
+  const procCpu = await readProcCpuInfo()
+  const cpuName = shortCpuName(procCpu.model || os.cpus()?.[0]?.model || "")
+  const cores = await cpuCount()
   const resource = (title, percent, detailed, info) => {
     const value = Math.round(percent)
     return { title, percent: value, inner: `${value}%`, detailed, info, ...ring(value) }
   }
   return {
     resources: [
-      resource("CPU", cpuPercent, `${os.cpus().length} 线程`, [cpuName]),
+      resource("CPU", cpuPercent, `${cores} 线程`, [cpuName || "未知处理器"]),
       resource("RAM", ramPercent, `${fileSize(ramTotal)} 总量`, [
         `${fileSize(ramUsed)} / ${fileSize(ramTotal)}`,
         `空闲 ${fileSize(ramFree)}`,
@@ -925,11 +1052,14 @@ export async function collectStatus(e, { pro = false } = {}) {
     { key: "分辨率", color: "#FF69B4", value: sys.resolution },
   ].filter(item => item.value)
 
-  const down = fileSizeParts(net.down)
-  const up = fileSizeParts(net.up)
+  const hasNetwork = !!net
+  const down = hasNetwork ? fileSizeParts(net.down) : null
+  const up = hasNetwork ? fileSizeParts(net.up) : null
+  const chart = hasNetwork ? buildChart(monitor.netHistory) : null
+  const showNetwork = hasNetwork && !!(down || up || chart)
 
   return {
-    width: 700,
+    width: statusImageWidth(),
     bots,
     infoCards: [
       { title: "系统", main: sys.osName, secondary: sys.osCaption },
@@ -944,13 +1074,16 @@ export async function collectStatus(e, { pro = false } = {}) {
     resources,
     disks,
     hasDisks: disks.length > 0,
-    network: {
-      down,
-      up,
-      rx: fileSizeParts(net.rx),
-      tx: fileSizeParts(net.tx),
-      chart: buildChart(monitor.netHistory),
-    },
+    network: showNetwork
+      ? {
+          down,
+          up,
+          rx: fileSizeParts(net.rx),
+          tx: fileSizeParts(net.tx),
+          chart,
+        }
+      : null,
+    hasNetwork: showNetwork,
     redis: redisInfo,
     hasRedis: !!redisInfo,
     processInfo,
@@ -965,6 +1098,12 @@ export async function collectStatus(e, { pro = false } = {}) {
 function statusImageScale() {
   const value = Number(cfg.webui?.statusImageScale)
   return Number.isFinite(value) ? Math.min(3, Math.max(1, value)) : 2
+}
+
+function statusImageWidth() {
+  const value = Number(cfg.webui?.statusImageWidth)
+  if (Number.isFinite(value) && value > 0) return Math.min(900, Math.max(420, value))
+  return 560
 }
 
 export async function renderStatusImage(e, options) {
