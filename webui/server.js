@@ -3219,6 +3219,12 @@ export function mountWebUI() {
   if (expressApp.skip_auth && !expressApp.skip_auth.includes(opts.basePath))
     expressApp.skip_auth.push(opts.basePath)
 
+  let quietAdded = false
+  if (Array.isArray(expressApp.quiet) && !expressApp.quiet.includes(opts.basePath)) {
+    expressApp.quiet.push(opts.basePath)
+    quietAdded = true
+  }
+
   const app = buildApp(opts)
   const before = stack.length
 
@@ -3247,6 +3253,10 @@ export function mountWebUI() {
       if (expressApp.skip_auth) {
         const index = expressApp.skip_auth.indexOf(opts.basePath)
         if (index !== -1) expressApp.skip_auth.splice(index, 1)
+      }
+      if (quietAdded) {
+        const index = expressApp.quiet.indexOf(opts.basePath)
+        if (index !== -1) expressApp.quiet.splice(index, 1)
       }
     },
   }
