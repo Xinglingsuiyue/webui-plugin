@@ -14,7 +14,7 @@ import AIManager from "./ai/AIManager.js"
 import AIToolRegistry from "./ai/AIToolRegistry.js"
 import { mountWebUI } from "./webui/server.js"
 import { HelpPanel } from "./help/index.js"
-import { WebPanelLogin } from "./webui/plugin.js"
+import { WebPanelLogin, WebPanelUpdate } from "./webui/plugin.js"
 import { AiPersona } from "./ai/builtin/persona.js"
 import { AiSessionCommands } from "./ai/builtin/commands.js"
 import { StatusPanel } from "./status/plugin.js"
@@ -113,6 +113,7 @@ export const apps = {
   WebUICore,
   HelpPanel,
   WebPanelLogin,
+  WebPanelUpdate,
   AiPersona,
   AiSessionCommands,
   StatusPanel,

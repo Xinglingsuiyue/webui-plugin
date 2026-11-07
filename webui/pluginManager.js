@@ -2,6 +2,9 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { spawn } from "node:child_process"
+import { createHash } from "node:crypto"
+import { fileURLToPath } from "node:url"
+import { gunzipSync } from "node:zlib"
 import cfg from "../compat/config.js"
 import PluginsLoader from "../../../lib/plugins/loader.js"
 import { listPluginConfigEntries } from "./config.js"
@@ -25,6 +28,260 @@ const PROTECTED = new Map([
   ["other", "框架内置插件"],
   ["example", "框架示例插件"],
 ])
+
+const SELF_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+const SELF_ARCHIVE = "https://codeload.github.com/Xinglingsuiyue/webui-plugin/tar.gz/refs/heads/master"
+const SELF_SKIP_DIRS = new Set([".git", "node_modules", "data", "config/config"])
+
+function selfSkip(relative) {
+  if (!relative) return true
+  if (/\.log$/i.test(relative)) return true
+  return [...SELF_SKIP_DIRS].some(dir => relative === dir || relative.startsWith(`${dir}/`))
+}
+
+function readTarString(buffer, start, length) {
+  const slice = buffer.subarray(start, start + length)
+  const end = slice.indexOf(0)
+  return slice.subarray(0, end === -1 ? slice.length : end).toString("utf8").trim()
+}
+
+function unpackTarGz(buffer) {
+  const tar = gunzipSync(buffer)
+  const files = new Map()
+  let offset = 0
+  while (offset + 512 <= tar.length) {
+    const header = tar.subarray(offset, offset + 512)
+    const name = readTarString(header, 0, 100)
+    if (!name) break
+    const size = parseInt(readTarString(header, 124, 12) || "0", 8) || 0
+    const type = readTarString(header, 156, 1) || "0"
+    const prefix = readTarString(header, 345, 155)
+    const dataStart = offset + 512
+    const data = tar.subarray(dataStart, dataStart + size)
+    offset = dataStart + Math.ceil(size / 512) * 512
+    if (type !== "0") continue
+    const segments = (prefix ? `${prefix}/${name}` : name).split("/")
+    const relative = segments.slice(1).join("/")
+    if (!relative || selfSkip(relative)) continue
+    files.set(relative, Buffer.from(data))
+  }
+  return files
+}
+
+async function downloadSelfArchive() {
+  const response = await fetch(SELF_ARCHIVE, {
+    signal: AbortSignal.timeout(60000),
+    headers: { "User-Agent": "TRSS-Yunzai-WebUI/1.0" },
+  })
+  if (!response.ok) throw new PluginManagerError(`下载更新包失败：HTTP ${response.status}`, 502)
+  const files = unpackTarGz(Buffer.from(await response.arrayBuffer()))
+  if (!files.size) throw new PluginManagerError("更新包内容为空", 502)
+  return files
+}
+
+function listSelfFiles() {
+  const files = new Map()
+  const walk = dir => {
+    let entries = []
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name)
+      const relative = path.relative(SELF_DIR, full).split(path.sep).join("/")
+      if (selfSkip(relative)) continue
+      if (entry.isDirectory()) walk(full)
+      else if (entry.isFile()) {
+        try {
+          files.set(relative, fs.readFileSync(full))
+        } catch {}
+      }
+    }
+  }
+  walk(SELF_DIR)
+  return files
+}
+
+function fileHash(buffer) {
+  return createHash("sha1").update(buffer).digest("hex")
+}
+
+const SELF_MANIFEST = path.join(WEBUI_DATA_DIR, "self-update.json")
+const SELF_BACKUP_DIR = path.join(WEBUI_DATA_DIR, "self-update-backup")
+
+function readSelfManifest() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(SELF_MANIFEST, "utf8"))
+    return raw && typeof raw.files === "object" && raw.files ? raw.files : null
+  } catch {
+    return null
+  }
+}
+
+function writeSelfManifest(files) {
+  const record = {}
+  for (const [relative, content] of files) record[relative] = fileHash(content)
+  try {
+    fs.mkdirSync(WEBUI_DATA_DIR, { recursive: true })
+    fs.writeFileSync(SELF_MANIFEST, `${JSON.stringify({ files: record }, null, 2)}\n`, "utf8")
+  } catch (error) {
+    Bot.makeLog("warn", ["写入更新记录失败", error?.message || error], "WebUI")
+  }
+}
+
+async function gitSelfDir() {
+  const top = await runProcess("git", ["rev-parse", "--show-toplevel"], { cwd: SELF_DIR, timeout: 20000 })
+  if (top.code !== 0) return ""
+  let real = path.resolve(top.stdout.trim())
+  try {
+    real = fs.realpathSync(real)
+  } catch {}
+  try {
+    return real === fs.realpathSync(SELF_DIR) ? real : ""
+  } catch {
+    return ""
+  }
+}
+
+async function gitSelfUpdate(force) {
+  const status = await runProcess("git", ["status", "--porcelain", "--untracked-files=no"], {
+    cwd: SELF_DIR,
+    timeout: 60000,
+  })
+  if (status.code !== 0)
+    throw new PluginManagerError(`读取本地改动失败：${tail(status.stderr) || `退出码 ${status.code}`}`, 500)
+  const dirty = status.stdout
+    .split("\n")
+    .map(line => line.replace(/\s+$/, ""))
+    .filter(Boolean)
+  if (dirty.length && !force) {
+    const names = dirty.slice(0, 10).map(line => line.slice(3).trim())
+    throw new PluginManagerError(
+      `本地有 ${dirty.length} 个文件被改动：${names.join("、")}${dirty.length > 10 ? " 等" : ""}，` +
+        "用 #webui强制更新 放弃这些改动",
+      409,
+    )
+  }
+
+  const before = await runProcess("git", ["rev-parse", "HEAD"], { cwd: SELF_DIR, timeout: 20000 })
+  const branch = await runProcess("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: SELF_DIR, timeout: 20000 })
+  const name = branch.code === 0 && branch.stdout.trim() && branch.stdout.trim() !== "HEAD" ? branch.stdout.trim() : "master"
+  const fetchResult = await runProcess("git", ["fetch", "--prune", "origin", name], {
+    cwd: SELF_DIR,
+    timeout: 180000,
+  })
+  if (fetchResult.code !== 0)
+    throw new PluginManagerError(
+      `拉取更新失败：${fetchResult.error || tail(fetchResult.stderr) || `退出码 ${fetchResult.code}`}`,
+      500,
+    )
+  const reset = await runProcess("git", ["reset", "--hard", "FETCH_HEAD"], { cwd: SELF_DIR, timeout: 60000 })
+  if (reset.code !== 0)
+    throw new PluginManagerError(
+      `应用更新失败：${reset.error || tail(reset.stderr) || `退出码 ${reset.code}`}`,
+      500,
+    )
+  const after = await runProcess("git", ["rev-parse", "HEAD"], { cwd: SELF_DIR, timeout: 20000 })
+  const changed = await runProcess("git", ["diff", "--name-only", before.stdout.trim() || "HEAD~1", "HEAD"], {
+    cwd: SELF_DIR,
+    timeout: 30000,
+  })
+  return {
+    updated: changed.code === 0 ? changed.stdout.split("\n").map(line => line.trim()).filter(Boolean) : [],
+    removed: [],
+    revision: after.stdout.trim(),
+    discarded: force ? dirty.length : 0,
+  }
+}
+
+async function archiveSelfUpdate(force) {
+  const remote = await downloadSelfArchive()
+  const local = listSelfFiles()
+  const updated = []
+  const removed = []
+  for (const [relative, content] of remote) {
+    const current = local.get(relative)
+    if (!current || fileHash(current) !== fileHash(content)) updated.push(relative)
+  }
+  for (const relative of local.keys()) if (!remote.has(relative)) removed.push(relative)
+
+  const manifest = readSelfManifest()
+  const conflicts = []
+  if (manifest) {
+    for (const [relative, hash] of Object.entries(manifest)) {
+      const current = local.get(relative)
+      if (!current) continue
+      if (fileHash(current) === hash) continue
+      if (remote.has(relative) && fileHash(remote.get(relative)) === hash) conflicts.push(relative)
+    }
+  }
+
+  if (conflicts.length && !force) {
+    throw new PluginManagerError(
+      `本地有 ${conflicts.length} 个文件被改动：${conflicts.slice(0, 10).join("、")}` +
+        `${conflicts.length > 10 ? " 等" : ""}，用 #webui强制更新 放弃这些改动`,
+      409,
+    )
+  }
+
+  const backups = []
+  for (const relative of updated) {
+    const file = path.join(SELF_DIR, relative)
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    if (!manifest && local.has(relative)) {
+      const backup = path.join(SELF_BACKUP_DIR, relative)
+      try {
+        fs.mkdirSync(path.dirname(backup), { recursive: true })
+        fs.writeFileSync(backup, local.get(relative))
+        backups.push(relative)
+      } catch {}
+    }
+    fs.writeFileSync(file, remote.get(relative))
+  }
+  for (const relative of removed) {
+    try {
+      fs.rmSync(path.join(SELF_DIR, relative), { force: true })
+    } catch {}
+  }
+  writeSelfManifest(remote)
+  return { updated, removed, backups, discarded: force ? conflicts.length : 0 }
+}
+
+export async function updateSelf({ force = false } = {}) {
+  lockOperation("更新 WebUI 插件")
+  try {
+    const result = (await gitSelfDir()) ? await gitSelfUpdate(force) : await archiveSelfUpdate(force)
+    const total = result.updated.length + result.removed.length
+    const discarded = result.discarded || 0
+    if (!total && !discarded)
+      return {
+        ok: true,
+        upToDate: true,
+        name: "webui-plugin",
+        restartRequired: false,
+        message: "webui-plugin 已是最新版本",
+      }
+    const parts = []
+    if (total) parts.push(`已更新 ${total} 个文件`)
+    if (discarded) parts.push(`已放弃本地改动 ${discarded} 处`)
+    return {
+      ok: true,
+      name: "webui-plugin",
+      restartRequired: true,
+      updated: result.updated.slice(0, 50),
+      removed: result.removed.slice(0, 50),
+      total,
+      discarded,
+      backups: result.backups || [],
+      message: `webui-plugin ${parts.join("，")}，重启 Bot 后生效`,
+    }
+  } finally {
+    unlockOperation()
+  }
+}
+
 
 const DEFAULT_GIT_HOSTS = [
   "github.com",

@@ -48,6 +48,7 @@ const DEFAULT_HELP_LIST = [
       { icon: "🔄", title: "#重启", desc: "重启机器人" },
       { icon: "⏹", title: "#关机", desc: "停止运行，也可用" },
       { icon: "⬆️", title: "#更新", desc: "更新框架与插件" },
+      { icon: "🐋", title: "#webui更新", desc: "更新 WebUI 插件，冲突时用 #webui强制更新" },
     ],
   },
 ]

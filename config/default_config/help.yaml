@@ -100,3 +100,6 @@ helpList:
       - icon: ⬆️
         title: "#更新"
         desc: 更新框架与插件
+      - icon: 🐋
+        title: "#webui更新"
+        desc: 更新 WebUI 插件，冲突时用 #webui强制更新

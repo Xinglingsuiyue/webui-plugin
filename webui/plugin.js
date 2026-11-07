@@ -2,6 +2,7 @@ import cfg from "../compat/config.js"
 import common from "../../../lib/common/common.js"
 import PluginsLoader from "../../../lib/plugins/loader.js"
 import { createLoginPanel } from "./LoginPanel.js"
+import { PluginManagerError, updateSelf } from "./pluginManager.js"
 
 const DEFAULT_WORDS = ["云崽登录"]
 
@@ -127,5 +128,44 @@ export class WebPanelLogin extends plugin {
     }
 
     return this.reply(await buildForward(e.friend))
+  }
+}
+
+const UPDATE_RULE = [{ reg: "^#webui\\s*(强制)?\\s*更新$", fnc: "update" }]
+
+export class WebPanelUpdate extends plugin {
+  constructor() {
+    super({
+      name: "WebUI 插件更新",
+      dsc: "#webui更新 从仓库拉取 webui-plugin 的最新文件",
+      event: "message",
+      priority: 100,
+
+      aiTool: false,
+      rule: UPDATE_RULE,
+    })
+  }
+
+  async update() {
+    if (this.e.isMaster !== true) return this.reply("这个指令只有主人能用。", true)
+
+    const force = /强制/.test(String(this.e.msg || ""))
+    await this.reply(force ? "正在强制更新 webui-plugin，稍等…" : "正在更新 webui-plugin，稍等…", true)
+    try {
+      const result = await updateSelf({ force })
+      if (result.upToDate) return this.reply("webui-plugin 已是最新版本。", true)
+      const list = [...(result.updated || []), ...(result.removed || [])].slice(0, 20)
+      const body = []
+      if (result.total) body.push(`webui-plugin 已更新 ${result.total} 个文件`)
+      else body.push("webui-plugin 本地改动已恢复为上游版本")
+      if (result.discarded) body.push(`已放弃本地改动 ${result.discarded} 处`)
+      body.push("重启 Bot 后生效", "")
+      body.push(...list.map(file => `· ${file}`))
+      if (result.total > list.length) body.push(`…另有 ${result.total - list.length} 个文件`)
+      return this.reply(body.join("\n").trim(), true)
+    } catch (err) {
+      const message = err instanceof PluginManagerError ? err.message : `更新失败：${err?.message || err}`
+      return this.reply(message, true)
+    }
   }
 }
