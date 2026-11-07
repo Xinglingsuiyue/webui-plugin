@@ -16,6 +16,42 @@ const DEFAULT_HELP_CFG = {
   footer: "",
 }
 
+const DEFAULT_HELP_LIST = [
+  {
+    group: "常用",
+    list: [
+      { icon: "📖", title: "#帮助", desc: "查看本帮助面板" },
+      { icon: "🔎", title: "#帮助 关键词", desc: "按关键词筛选功能" },
+      { icon: "🎭", title: "#persona", desc: "查看人格列表，管理员可切换" },
+      { icon: "🖥", title: "#状态", desc: "查看机器人运行状态" },
+    ],
+  },
+  {
+    group: "智能对话",
+    auth: "master",
+    list: [
+      { icon: "🎚", title: "#persona 预设名", desc: "切换本群/本私聊的人格" },
+      { icon: "↩️", title: "#persona 默认", desc: "恢复跟随主人格" },
+      { icon: "🧠", title: "#我的记忆", desc: "查看你的回忆" },
+      { icon: "🗑", title: "#清除记忆", desc: "清空你的回忆" },
+      { icon: "📝", title: "#群聊总结", desc: "总结本群近期聊天" },
+      { icon: "📊", title: "#对话状态", desc: "查看当前会话的人格、模型与轮数" },
+      { icon: "🛑", title: "#结束对话", desc: "清空当前会话上下文" },
+    ],
+  },
+  {
+    group: "管理",
+    auth: "master",
+    list: [
+      { icon: "🔑", title: "#云崽登录", desc: "获取带一次性登录码的 WebUI 地址" },
+      { icon: "📄", title: "#版本", desc: "查看当前框架版本" },
+      { icon: "🔄", title: "#重启", desc: "重启机器人" },
+      { icon: "⏹", title: "#关机", desc: "停止运行，也可用" },
+      { icon: "⬆️", title: "#更新", desc: "更新框架与插件" },
+    ],
+  },
+]
+
 export const STYLE_KEYS = [
   "accentColor",
   "fontColor",
@@ -120,7 +156,9 @@ export function normalizeHelpConfig(rawInput) {
 
 export function getHelpConfig() {
   const raw = cfg.help && typeof cfg.help === "object" ? cfg.help : {}
-  return normalizeHelpConfig(raw)
+  const parsed = normalizeHelpConfig(raw)
+  if (!parsed.helpList.length) parsed.helpList = DEFAULT_HELP_LIST
+  return parsed
 }
 
 export function buildHelpGroups(helpList, e, keyword = "", colCount = DEFAULT_HELP_CFG.colCount, options = {}) {

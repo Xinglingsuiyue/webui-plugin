@@ -35,6 +35,15 @@ function execText(command, args, timeout = 8000) {
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 
+function safe(task, fallback) {
+  return Promise.resolve()
+    .then(task)
+    .catch(err => {
+      Bot.makeLog("warn", ["状态信息采集失败", err?.message || err], "StatusPanel")
+      return typeof fallback === "function" ? fallback() : fallback
+    })
+}
+
 function parseCsv(text) {
   const lines = text.split(/\r?\n/).map(line => line.trim()).filter(line => line && line.includes(","))
   if (lines.length < 2) return []
@@ -813,18 +822,58 @@ export async function collectStatus(e, { pro = false } = {}) {
   const ramFree = os.freemem()
   const ramUsed = ramTotal - ramFree
 
+  const fallbackSystem = () => ({
+    osName: PLATFORM_NAME[process.platform] || process.platform,
+    osCaption: "",
+    osVersion: os.release(),
+    kernel: os.release(),
+    host: os.hostname(),
+    board: "",
+    bios: "",
+    terminal: terminalName(),
+    resolution: "",
+    gpus: [],
+    memSpeed: 0,
+    swap: { total: 0, used: 0 },
+    cpu: {
+      name: os.cpus()[0]?.model || "",
+      shortName: shortCpuName(os.cpus()[0]?.model || ""),
+      manufacturer: cpuManufacturer(os.cpus()[0]?.model || ""),
+      cores: os.cpus().length,
+      threads: os.cpus().length,
+      speed: "",
+    },
+  })
+
   const [cpuPercent, sys, disks, processInfo, redisInfo, net, avatars, plugins] = await Promise.all([
-    collectCpuLoad(),
-    collectSystemInfo(),
-    collectDisks(),
-    collectProcess(),
-    collectRedis(),
-    sampleNetwork(),
-    Promise.all(targets.map(item => fetchAvatar(Number(item.uin) > 0 ? item.uin : ""))),
-    countPlugins(),
+    safe(collectCpuLoad, 0),
+    safe(collectSystemInfo, fallbackSystem),
+    safe(collectDisks, []),
+    safe(collectProcess, { counts: { all: 0, running: 0, blocked: 0, sleeping: 0, unknown: 0 }, list: [] }),
+    safe(collectRedis, null),
+    safe(sampleNetwork, { down: 0, up: 0, rx: 0, tx: 0 }),
+    safe(
+      () => Promise.all(targets.map(item => fetchAvatar(Number(item.uin) > 0 ? item.uin : ""))),
+      () => targets.map(() => ""),
+    ),
+    safe(countPlugins, { plugins: 0, js: 0 }),
   ])
   const bots = await Promise.all(
-    targets.map((item, index) => botCard(item.uin, item.bot, avatars[index])),
+    targets.map((item, index) =>
+      safe(() => botCard(item.uin, item.bot, avatars[index]), () => ({
+        avatar: "",
+        nickname: cfg.bot?.name || "Yunzai",
+        statusColor: "#f87171",
+        botRuntime: "",
+        loginProtocol: "未知",
+        protocolVersion: "",
+        friendCount: 0,
+        groupCount: 0,
+        groupMemberCount: 0,
+        recvCount: 0,
+        sendCount: 0,
+      })),
+    ),
   )
 
   const ramPercent = (ramUsed / ramTotal) * 100
@@ -919,14 +968,29 @@ function statusImageScale() {
 }
 
 export async function renderStatusImage(e, options) {
-  const data = await collectStatus(e, options)
-  return Renderer.render("status/status", {
-    tplFile,
-    saveId: "status",
-    ...data,
-    scale: statusImageScale(),
-    quality: 95,
-  }).catch(() => null)
+  let data
+  try {
+    data = await collectStatus(e, options)
+  } catch (err) {
+    Bot.makeLog("warn", ["状态数据收集失败", err?.message || err], "StatusPanel")
+    return null
+  }
+
+  const scales = [statusImageScale(), 1].filter((value, index, arr) => arr.indexOf(value) === index)
+  for (const scale of scales) {
+    const image = await Renderer.render("status/status", {
+      tplFile,
+      saveId: "status",
+      ...data,
+      scale,
+      quality: 95,
+    }).catch(err => {
+      Bot.makeLog("warn", ["状态图渲染失败", `scale=${scale}`, err?.message || err], "StatusPanel")
+      return null
+    })
+    if (image) return image
+  }
+  return null
 }
 
 startMonitor()
