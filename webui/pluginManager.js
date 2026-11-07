@@ -199,15 +199,17 @@ async function gitSelfUpdate(force) {
 async function archiveSelfUpdate(force) {
   const remote = await downloadSelfArchive()
   const local = listSelfFiles()
+  const manifest = readSelfManifest()
   const updated = []
   const removed = []
   for (const [relative, content] of remote) {
     const current = local.get(relative)
     if (!current || fileHash(current) !== fileHash(content)) updated.push(relative)
   }
-  for (const relative of local.keys()) if (!remote.has(relative)) removed.push(relative)
+  if (manifest)
+    for (const relative of Object.keys(manifest))
+      if (!remote.has(relative) && local.has(relative)) removed.push(relative)
 
-  const manifest = readSelfManifest()
   const conflicts = []
   if (manifest) {
     for (const [relative, hash] of Object.entries(manifest)) {
