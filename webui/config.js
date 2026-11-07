@@ -100,6 +100,16 @@ const GROUP_NUMERIC = new Set(["groupCD", "singleCD", "addRecall"])
 const GROUP_ARRAY = new Set(["botAlias", "enable", "disable", "disabledBots"])
 const FEATURE_LIST_FIELDS = new Set(["enable", "disable"])
 const BOT_LIST_FIELDS = new Set(["disabledBots"])
+const GROUP_BUILTIN_FIELDS = {
+  disabledBots: {
+    label: "账号禁用",
+    help: "账号禁用。账号在群不回应",
+    type: "array",
+    editor: "list",
+    itemType: "string",
+    defaultValue: [],
+  },
+}
 const GROUP_BINARY = new Set(["addPrivate", "addReply", "addAt"])
 const GROUP_OPTIONS = {
   onlyReplyAt: [
@@ -819,6 +829,21 @@ function buildGroupFields(docs, features, bots = []) {
       defaultValue: entry.defaultValue,
     })
   }
+
+  for (const [name, builtin] of Object.entries(GROUP_BUILTIN_FIELDS)) {
+    if (map.has(pathKey([name]))) continue
+    const field = {
+      path: [name],
+      key: name,
+      ...builtin,
+      candidates: BOT_LIST_FIELDS.has(name) ? botCandidates : undefined,
+      valueLabels: BOT_LIST_FIELDS.has(name) && Object.keys(botLabels).length ? botLabels : undefined,
+      botList: BOT_LIST_FIELDS.has(name),
+    }
+    const index = fields.findIndex(item => item.path[0] === "disable")
+    if (index === -1) fields.push(field)
+    else fields.splice(index + 1, 0, field)
+  }
   return fields
 }
 
@@ -910,9 +935,10 @@ function groupResponse(docs, fields, botId, groupId) {
   return {
     fields: fields.map(field => {
       const overridden = !isDefault && hasOwnPath(currentBlock, field.path)
+      const value = getValueAt(effective, field.path)
       return {
         ...field,
-        value: getValueAt(effective, field.path),
+        value: value === undefined && GROUP_BUILTIN_FIELDS[field.path[0]] ? field.defaultValue : value,
         inherited: !isDefault && !overridden,
         overridden,
       }
@@ -1029,8 +1055,10 @@ export function saveGroupConfig(body = {}) {
     if (!field) continue
     if (key === "default") {
       const shipped = getValueAt(docs.defaultVals.default, field.path)
-      if (shipped === undefined) doc.deleteIn([rawKey, ...field.path])
-      else doc.setIn([rawKey, ...field.path], shipped)
+      const builtin = field.path.length === 1 ? GROUP_BUILTIN_FIELDS[field.path[0]] : undefined
+      const target = shipped === undefined ? builtin?.defaultValue : shipped
+      if (target === undefined) doc.deleteIn([rawKey, ...field.path])
+      else doc.setIn([rawKey, ...field.path], target)
     } else doc.deleteIn([rawKey, ...field.path])
     changed++
   }
