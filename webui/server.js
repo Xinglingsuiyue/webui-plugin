@@ -2472,7 +2472,7 @@ function buildApp(opts) {
       if (!meaning) return fail(res, 400, "请填写表情含义")
       try {
         const cfg = aiAdmin.stickerConfig
-        const { entry, duplicate, pending } = store.add(req.body, {
+        const { entry, duplicate, pending, similar, similarity } = await store.add(req.body, {
           meaning,
           category,
           description: String(req.query.description || ""),
@@ -2484,6 +2484,22 @@ function buildApp(opts) {
           source: "webui",
           requireReview: cfg.requireReview === true,
           reviewTimeoutMs: (Number(cfg.reviewTimeoutHours) || 24) * 3600 * 1000,
+          similarityThreshold: cfg.similarityThreshold,
+        })
+        res.json({
+          ok: true,
+          duplicate,
+          similar: similar === true,
+          similarity: similar === true ? similarity : undefined,
+          pending: pending === true,
+          item: entry,
+          message: similar
+            ? `这张和库里「${entry.category}/${entry.meaning}」相似度 ${similarity}%，超过上限，已拒绝保存`
+            : pending
+              ? `已提交审核，${Number(cfg.reviewTimeoutHours) || 24} 小时内未处理会自动通过`
+              : duplicate
+                ? "这张表情已存在"
+                : `已保存为「${entry.category}/${entry.meaning}」`,
         })
         res.json({
           ok: true,
