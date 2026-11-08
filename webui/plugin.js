@@ -22,23 +22,20 @@ function buildRule(words) {
   if (!list.length) return null
   const escaped = list
     .sort((a, b) => b.length - a.length)
-
     .map(word => word.replace(/^#+/, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
     .filter(Boolean)
   if (!escaped.length) return null
   return `^#(?:${escaped.join("|")})$`
 }
 
-function currentRule() {
-  const rule = buildRule([...loginWords(), ...configuredWords(cfg.webui?.loginCommands)])
-  return rule ? [{ reg: rule, fnc: "panel" }] : []
-}
-
 export function refreshLoginRule() {
   const entries = (PluginsLoader.priority || []).filter(
     entry => entry.plugin instanceof WebPanelLogin,
   )
-  for (const entry of entries) entry.plugin.rule = currentRule()
+  for (const entry of entries) {
+    const rule = buildRule([...loginWords(), ...configuredWords(cfg.webui?.loginCommands)])
+    entry.plugin.rule = rule ? [{ reg: rule, fnc: "panel" }] : []
+  }
   return entries.length
 }
 
@@ -52,7 +49,6 @@ function buildSegments(panel, opts = {}) {
     else segments.push("已启用「只发送自定义地址」，但 plugins/webui-plugin/config/config/webui.yaml 里还没填 customAddresses。")
   } else {
     push("自定义地址", panel.custom)
-
     push("内网地址", [...panel.local, ...(panel.localV6 || [])])
     push("外网地址", [...panel.remote, ...(panel.remoteV6 || [])])
     const all = [
@@ -76,14 +72,14 @@ function buildSegments(panel, opts = {}) {
 
 export class WebPanelLogin extends plugin {
   constructor() {
+    const rule = buildRule([...loginWords(), ...configuredWords(cfg.webui?.loginCommands)])
     super({
       name: "管理面板登录",
       dsc: "获取 WebUI 管理面板地址与临时登录码",
       event: "message",
       priority: 100,
-
       aiTool: false,
-      rule: currentRule(),
+      rule: rule ? [{ reg: rule, fnc: "panel" }] : [],
     })
   }
 
@@ -112,7 +108,6 @@ export class WebPanelLogin extends plugin {
     }
 
     const segments = buildSegments(panel, { onlyCustom })
-
     const buildForward = target =>
       target?.makeForwardMsg ? target.makeForwardMsg(segments.map(message => ({ message }))) : common.makeForwardMsg(e, segments)
 
@@ -150,7 +145,6 @@ export class WebPanelUpdate extends plugin {
       dsc: "#webui更新 从仓库拉取 webui-plugin 的最新文件",
       event: "message",
       priority: 100,
-
       aiTool: false,
       rule: UPDATE_RULE,
     })
