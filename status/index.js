@@ -1238,6 +1238,32 @@ export async function collectStatus(e, { pro = false } = {}) {
   const ramFree = os.freemem()
   const ramUsed = ramTotal - ramFree
 
+  const fallbackSystem = () => ({
+    osName: PLATFORM_NAME[process.platform] || process.platform,
+    osCaption: "",
+    osVersion: os.release(),
+    kernel: os.release(),
+    host: os.hostname(),
+    board: "",
+    bios: "",
+    terminal: terminalName(),
+    resolution: "",
+    gpus: [],
+    shell: "",
+    editor: "",
+    android: null,
+    memSpeed: 0,
+    swap: { total: 0, used: 0 },
+    cpu: {
+      name: os.cpus()[0]?.model || "",
+      shortName: shortCpuName(os.cpus()[0]?.model || ""),
+      manufacturer: cpuManufacturer(os.cpus()[0]?.model || ""),
+      cores: os.cpus().length,
+      threads: os.cpus().length,
+      speed: "",
+    },
+  })
+
   const [cpuPercent, sys, disks, diskIo, processInfo, redisInfo, net, avatars, plugins, packages, git] = await Promise.all([
     safe(collectCpuLoad, 0),
     safe(collectSystemInfo, fallbackSystem),
