@@ -128,8 +128,35 @@ export class WebPanelLogin extends plugin {
 
 const UPDATE_RULE = [{ reg: "^#webui\\s*(强制)?\\s*更新$", fnc: "update" }]
 
-async function restartBot() {
+const RESTART_KEY = "Yz:restart"
+
+function findRestarter(e) {
+  const list = PluginsLoader.priority || []
+  for (const item of list) {
+    const target = item?.plugin || item
+    if (target?.key !== RESTART_KEY || typeof target.restart !== "function") continue
+    const Class = item?.class
+    if (typeof Class === "function") {
+      try {
+        return Object.assign(new Class(e), { e })
+      } catch {}
+    }
+    target.e = e
+    return target
+  }
+}
+
+async function restartBot(e) {
   await new Promise(resolve => setTimeout(resolve, 1200))
+  const restarter = findRestarter(e)
+  if (restarter)
+    try {
+      return await restarter.restart()
+    } catch (err) {
+      Bot.makeLog("warn", ["自动重启失败，请手动重启", err?.message || err], "WebUI")
+      return
+    }
+  Bot.makeLog("warn", "未找到重启插件，直接重启", "WebUI")
   try {
     if (typeof Bot.restart === "function") return await Bot.restart()
     if (typeof Bot.exit === "function") return await Bot.exit()
@@ -175,6 +202,6 @@ export class WebPanelUpdate extends plugin {
     body.push(...list.map(file => `· ${file}`))
     if (result.total > list.length) body.push(`…另有 ${result.total - list.length} 个文件`)
     await this.reply(body.join("\n").trim())
-    await restartBot()
+    await restartBot(this.e)
   }
 }
