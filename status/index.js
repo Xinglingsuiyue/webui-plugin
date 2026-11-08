@@ -1348,6 +1348,9 @@ export async function collectStatus(e, { pro = false } = {}) {
     { key: "BIOS", color: "#776FA4", value: sys.bios },
     { key: "分辨率", color: "#FF69B4", value: sys.resolution },
   ].filter(item => item.value)
+  for (const row of sys.android || []) {
+    if (!fastInfo.some(item => item.value === row.value)) fastInfo.push(row)
+  }
 
   const hasNetwork = !!net
   const down = hasNetwork ? fileSizeParts(net.down) : null
@@ -1392,7 +1395,6 @@ export async function collectStatus(e, { pro = false } = {}) {
     hasRedis: !!redisInfo,
     processInfo,
     fastInfo,
-    android: sys.android,
     footer: {
       line1: `Created By Yunzai v${cfg.package?.version || ""}`,
       line2: [`Node ${process.version}`, `V8 ${process.versions.v8 || ""}`, git && `Git ${git}`, fullClock()].filter(Boolean).join(" & "),
