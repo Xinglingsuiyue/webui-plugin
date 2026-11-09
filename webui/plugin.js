@@ -113,7 +113,7 @@ export class WebPanelLogin extends plugin {
 
     if (e.isGroup && webui.loginInGroup !== true) {
       try {
-        const friend = e.bot?.pickFriend ? e.bot.pickFriend(e.user_id) : Bot.pickFriend(e.user_id)
+        const friend = e.friend || (e.bot?.pickFriend ? e.bot.pickFriend(e.user_id) : Bot.pickFriend(e.user_id))
         await friend.sendMsg(await buildForward(friend))
         return this.reply("面板地址和临时登录码已私聊发给你了~", true)
       } catch (err) {

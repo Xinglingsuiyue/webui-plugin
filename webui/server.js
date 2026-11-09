@@ -1052,7 +1052,7 @@ function buildApp(opts) {
 
   const helpThemeRaw = express.raw({
     type: ["image/png", "image/jpeg", "image/jpg", "image/webp"],
-    limit: "7mb",
+    limit: "32mb",
   })
 
   router.post(
@@ -1114,7 +1114,7 @@ function buildApp(opts) {
 
   const helpIconRaw = express.raw({
     type: ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"],
-    limit: "1.2mb",
+    limit: "32mb",
   })
 
   router.post(
