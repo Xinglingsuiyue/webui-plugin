@@ -113,12 +113,13 @@ export class WebPanelLogin extends plugin {
 
     if (e.isGroup && webui.loginInGroup !== true) {
       try {
-        const friend = Bot.pickFriend(e.user_id)
+        const friend = e.bot?.pickFriend ? e.bot.pickFriend(e.user_id) : Bot.pickFriend(e.user_id)
         await friend.sendMsg(await buildForward(friend))
         return this.reply("面板地址和临时登录码已私聊发给你了~", true)
       } catch (err) {
-        Bot.makeLog("warn", ["面板地址私聊发送失败", err.message], "WebPanel")
-        return this.reply("私聊发送失败，请先加我好友，或者私聊发送这条指令。", true)
+        const uin = e.self_id || e.bot?.uin
+        Bot.makeLog("warn", ["面板地址私聊发送失败", uin, e.user_id, err.message], "WebPanel")
+        return this.reply(`私聊发送失败（账号 ${uin || "未知"}），请先加我好友，或者私聊发送这条指令。`, true)
       }
     }
 
