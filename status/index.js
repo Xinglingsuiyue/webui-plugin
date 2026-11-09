@@ -1440,7 +1440,7 @@ export async function renderStatusImage(e, options) {
       tplFile,
       saveId: "status",
       ...data,
-      scale,
+      imgScale: scale,
       quality: 100,
     }).catch(err => {
       Bot.makeLog("warn", ["状态图渲染失败", `scale=${scale}`, err?.message || err], "StatusPanel")
