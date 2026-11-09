@@ -605,6 +605,13 @@ async function collectSystemInfoUnix() {
 }
 
 
+const PSEUDO_FS = /^(rootfs|unionfs|squashfs|cramfs|initrd|initramfs|devtmpfs|tmpfs|udev|devfs|specfs|appimaged)$/
+
+function isPseudoDisk(mount, type) {
+  if (/^\/(apex|linkerconfig)(\/|$)/.test(mount)) return true
+  return PSEUDO_FS.test(String(type || "").toLowerCase())
+}
+
 async function collectDisks() {
   if (IS_WIN) {
     const rows = parseCsv(
@@ -623,6 +630,7 @@ async function collectDisks() {
   const parse = (text, withType) => {
     const disks = []
     const seen = new Set()
+    const seenStats = new Set()
     for (const line of text.split(/\r?\n/).slice(1)) {
       const cols = line.trim().split(/\s+/)
       if (cols.length < (withType ? 7 : 6)) continue
@@ -633,7 +641,11 @@ async function collectDisks() {
       if (!Number.isFinite(total) || total <= 0) continue
       const mount = cols.slice(offset + 5).join(" ") || "/"
       if (seen.has(mount)) continue
+      if (isPseudoDisk(mount, withType ? cols[1] : "")) continue
+      const stats = `${total}:${used}:${free}`
+      if (seenStats.has(stats)) continue
       seen.add(mount)
+      seenStats.add(stats)
       disks.push(buildDisk(mount === "/" ? "/ (根目录)" : mount, withType ? cols[1] : "", total, free, used))
     }
     return disks
@@ -1269,7 +1281,7 @@ export async function collectStatus(e, { pro = false } = {}) {
     safe(collectSystemInfo, fallbackSystem),
     safe(collectDisks, []),
     safe(collectDiskIO, null),
-    safe(collectProcess, { counts: { all: 0, running: 0, blocked: 0, sleeping: 0, unknown: 0 }, list: [] }),
+    safe(() => (pro ? collectProcess() : null), null),
     safe(collectRedis, null),
     safe(sampleNetwork, { down: 0, up: 0, rx: 0, tx: 0 }),
     safe(
