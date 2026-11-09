@@ -1429,7 +1429,7 @@ export async function renderStatusImage(e, options) {
       saveId: "status",
       ...data,
       scale,
-      quality: 95,
+      quality: 100,
     }).catch(err => {
       Bot.makeLog("warn", ["状态图渲染失败", `scale=${scale}`, err?.message || err], "StatusPanel")
       return null
