@@ -1001,7 +1001,7 @@ function buildApp(opts) {
   router.get(
     "/config/file/:name",
     asyncRoute(async (req, res) => {
-      res.json(readCoreConfig(String(req.params.name || "")))
+      res.json(attachPluginConfigCandidateLabels(readCoreConfig(String(req.params.name || ""))))
     }),
   )
 

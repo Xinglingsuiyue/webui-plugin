@@ -74,6 +74,13 @@ const CORE_TYPE_OVERRIDES = {
   "ai.disabledToolPlugins": "array",
 }
 
+const CORE_CANDIDATE_KINDS = {
+  "other.whiteGroup": "groups",
+  "other.blackGroup": "groups",
+  "other.whiteUser": "friends",
+  "other.blackUser": "friends",
+}
+
 const CORE_EMPTY_HINTS = {
   "webui.loginCommands": "留空默认 #云崽登录，添加后默认不再响应",
 }
@@ -510,6 +517,7 @@ function buildFileFields({ liveVals, defaultVals, comments, fileName, kind }) {
       readOnly,
       fromDefault: !inLive && inDefault,
       restartRequired: fieldNeedsRestart(fileName, entry.path, kind),
+      ...(overrideKey && CORE_CANDIDATE_KINDS[overrideKey] ? { candidateKind: CORE_CANDIDATE_KINDS[overrideKey] } : {}),
       ...(overrideKey && CORE_EMPTY_HINTS[overrideKey] ? { emptyHint: CORE_EMPTY_HINTS[overrideKey] } : {}),
     })
   }
