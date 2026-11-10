@@ -1409,9 +1409,8 @@ export async function collectStatus(e, { pro = false } = {}) {
     processInfo,
     fastInfo,
     footer: {
-      line1: `Created By Yunzai v${cfg.package?.version || ""}`,
+      line1: [`Created By Yunzai v${cfg.package?.version || ""}`, WEBUI_VERSION && `WebUI v${WEBUI_VERSION}`].filter(Boolean).join(" & "),
       line2: [`Node ${process.version}`, `V8 ${process.versions.v8 || ""}`, git && `Git ${git}`, fullClock()].filter(Boolean).join(" & "),
-      line3: WEBUI_VERSION ? `WebUI v${WEBUI_VERSION}` : "",
     },
   }
 }
