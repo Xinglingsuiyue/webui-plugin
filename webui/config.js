@@ -29,7 +29,7 @@ const CORE_FILE_META = {
   ai: ["AI 参数", "由「AI」分组的设置与工具配置托管。"],
   bot: ["Bot 基础", "日志、插件加载、文件监控、定时任务与浏览器设置。"],
   other: ["账号与安全", "主人账号、自动处理、黑白名单与私聊策略。"],
-  webui: ["WebUI", "访问路径、令牌与本地控制台策略。"],
+  webui: ["WebUI", "访问路径、访问密码与控制台策略。"],
   server: ["HTTP 服务", "Bot 监听端口、默认跳转与整体鉴权。"],
   redis: ["Redis", "连接地址、凭据与数据库编号。"],
   db: ["数据库", "Sequelize 方言与 SQLite 存储位置。"],
@@ -40,11 +40,12 @@ const CORE_FILE_META = {
 }
 
 const RESTART_REQUIRED = new Set(["webui", "server", "redis", "db", "renderer", "milky", "satori"])
-const PROTECTED_WEBUI_FIELDS = new Set(["enable", "path", "token", "allowWrite"])
+const PROTECTED_WEBUI_FIELDS = new Set(["enable", "path", "token", "allowWrite", "initialPassword"])
 
 const MANAGED_ELSEWHERE = {
   webui: new Set(["statusImageScale", "statusImageWidth", "statusProForAll"]),
 }
+const INTERNAL_WEBUI_FIELDS = new Set(["initialPassword"])
 
 const CORE_TYPE_OVERRIDES = {
   "bot.update_cron": "string",
@@ -279,6 +280,16 @@ function ensureLiveConfigFile(name) {
   return file
 }
 
+export function saveWebuiCredential({ token, initialPassword }) {
+  const file = coreFilePath("webui")
+  const { doc } = readDocument(file)
+  doc.set("token", String(token))
+  if (initialPassword) doc.set("initialPassword", true)
+  else doc.delete("initialPassword")
+  writeDocument(file, doc)
+  invalidateConfigCache("webui")
+}
+
 function extractComments(text) {
   const comments = new Map()
   const stack = []
@@ -418,6 +429,10 @@ function isManagedElsewhere(fileName, pathList) {
   return MANAGED_ELSEWHERE[fileName]?.has(String(pathList[0])) === true
 }
 
+function isInternalField(fileName, pathList) {
+  return fileName === "webui" && INTERNAL_WEBUI_FIELDS.has(String(pathList[0]))
+}
+
 function fieldHelp(comment, secret, readOnly, label = "") {
   const parts = []
 
@@ -448,8 +463,8 @@ function buildFileFields({ liveVals, defaultVals, comments, fileName, kind }) {
   const fields = []
   for (const entry of map.values()) {
     if (!entry.path.length) continue
-
-    const hidden = kind === "core" && isManagedElsewhere(fileName, entry.path)
+    const hidden =
+      kind === "core" && (isManagedElsewhere(fileName, entry.path) || isInternalField(fileName, entry.path))
     const inLive = hasOwnPath(liveVals, entry.path)
     const inDefault = hasOwnPath(defaultVals, entry.path)
     let value = inLive ? getValueAt(liveVals, entry.path) : getValueAt(defaultVals, entry.path)
@@ -477,7 +492,12 @@ function buildFileFields({ liveVals, defaultVals, comments, fileName, kind }) {
       key: joined,
       ...(hidden ? { hidden: true } : {}),
       label,
-      help: overrideKey && CORE_EMPTY_HINTS[overrideKey] ? "" : fieldHelp(labelText, secret, readOnly, label),
+      help:
+        overrideKey && CORE_EMPTY_HINTS[overrideKey]
+          ? ""
+          : fileName === "webui" && joined === "token"
+            ? ""
+            : fieldHelp(labelText, secret, readOnly, label),
       type,
       editor: modelPool ? "model-pool" : editorFor(type, options, itemType),
       itemType,
