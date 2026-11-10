@@ -196,6 +196,20 @@ async function gitSelfUpdate(force) {
   }
 }
 
+function clockNow() {
+  const now = new Date()
+  const pad = value => String(value).padStart(2, "0")
+  return `${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`
+}
+
+async function gitSelfTime() {
+  const head = await runProcess("git", ["log", "-1", "--pretty=format:%cd", "--date=format:%m-%d %H:%M"], {
+    cwd: SELF_DIR,
+    timeout: 20000,
+  })
+  return head.code === 0 && head.stdout.trim() ? head.stdout.trim() : clockNow()
+}
+
 async function archiveSelfUpdate(force) {
   const remote = await downloadSelfArchive()
   const local = listSelfFiles()
@@ -254,7 +268,9 @@ async function archiveSelfUpdate(force) {
 export async function updateSelf({ force = false } = {}) {
   lockOperation("更新 WebUI 插件")
   try {
-    const result = (await gitSelfDir()) ? await gitSelfUpdate(force) : await archiveSelfUpdate(force)
+    const gitDir = await gitSelfDir()
+    const result = gitDir ? await gitSelfUpdate(force) : await archiveSelfUpdate(force)
+    const time = gitDir ? await gitSelfTime() : clockNow()
     const total = result.updated.length + result.removed.length
     const discarded = result.discarded || 0
     if (!total && !discarded)
@@ -263,6 +279,7 @@ export async function updateSelf({ force = false } = {}) {
         upToDate: true,
         name: "webui-plugin",
         restartRequired: false,
+        time,
         message: "webui-plugin 已是最新版本",
       }
     const parts = []
@@ -276,6 +293,7 @@ export async function updateSelf({ force = false } = {}) {
       removed: result.removed.slice(0, 50),
       total,
       discarded,
+      time,
       backups: result.backups || [],
       message: `webui-plugin ${parts.join("，")}，重启 Bot 后生效`,
     }

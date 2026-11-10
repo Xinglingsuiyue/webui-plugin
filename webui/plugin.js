@@ -192,17 +192,10 @@ export class WebPanelUpdate extends plugin {
       return this.reply(message)
     }
 
-    if (result.upToDate) return this.reply("webui-plugin 已是最新版本。")
+    if (result.upToDate) return this.reply(`webui-plugin已经是最新版本\n最后更新时间：${result.time}`)
 
-    const list = [...(result.updated || []), ...(result.removed || [])].slice(0, 20)
-    const body = []
-    if (result.total) body.push(`webui-plugin 已更新 ${result.total} 个文件`)
-    else body.push("webui-plugin 本地改动已恢复为上游版本")
-    if (result.discarded) body.push(`已放弃本地改动 ${result.discarded} 处`)
-    body.push("正在重启生效", "")
-    body.push(...list.map(file => `· ${file}`))
-    if (result.total > list.length) body.push(`…另有 ${result.total - list.length} 个文件`)
-    await this.reply(body.join("\n").trim())
+    await this.reply(`webui-plugin\n最后更新时间：${result.time}`)
+    await this.reply("更新完成，正在重启")
     await restartBot(this.e)
   }
 }
