@@ -5,6 +5,7 @@ import { render as renderImage } from "../compat/renderer.js"
 import { fileURLToPath } from "node:url"
 import { getHelpConfig, normalizeHelpConfig, buildHelpGroups, helpText, helpFooterText, HELP_VERSION } from "./HelpConfig.js"
 import { getThemeData } from "./HelpTheme.js"
+import { WEBUI_VERSION } from "../paths.js"
 
 const tplFile = fileURLToPath(new URL("./resources/help.html", import.meta.url))
 const tplSource = fs.readFileSync(tplFile, "utf8")
@@ -91,6 +92,7 @@ export function renderHelpPreviewHtml({ helpCfg, helpList, themeName } = {}) {
     cellWidth: (100 / cfgData.colCount).toFixed(4),
     helpFooter: helpFooterText(cfgData),
     helpVersion: HELP_VERSION,
+    webuiVersion: WEBUI_VERSION,
     ...theme,
   })
   return { html: html.replace("</body>", `${PREVIEW_EXTRA}</body>`), themeName: theme.themeName, width }
@@ -110,6 +112,7 @@ export async function renderHelpPanel({ keyword = "", isMaster = true } = {}) {
     cellWidth: (100 / helpCfg.colCount).toFixed(4),
     helpFooter: helpFooterText(helpCfg),
     helpVersion: HELP_VERSION,
+    webuiVersion: WEBUI_VERSION,
     bare: true,
     ...getThemeData(helpCfg),
   }

@@ -109,7 +109,8 @@
       padding: 2px 6px;
       border-radius: 4px;
     }
-    .footer .count { flex: none; font-variant-numeric: tabular-nums; }
+    .footer .count { flex: none; font-variant-numeric: tabular-nums; text-align: right; }
+    .footer .ver { font-size: 10px; opacity: 0.7; }
   </style>
 </head>
 <body>
@@ -143,7 +144,10 @@
         <span class="hint">{{permissionText}}</span>
         {{/if}}
       </div>
-      <div class="count">{{total}} 个预设</div>
+      <div class="count">
+        <div>{{total}} 个预设</div>
+        {{if webuiVersion}}<div class="ver">WebUI v{{webuiVersion}}</div>{{/if}}
+      </div>
     </div>
   </div>
 </body>

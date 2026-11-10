@@ -282,6 +282,7 @@
     }
     if (!response.ok) throw new Error(data.message || `无法连接 WebUI 服务（HTTP ${response.status}）`);
     if (data.basePath) state.basePath = data.basePath;
+    if (data.webuiVersion) state.webuiVersion = data.webuiVersion;
     state.tokenRequired = !!data.tokenRequired;
     state.allowWrite = data.allowWrite !== false;
     return data;
@@ -743,6 +744,7 @@
     const bots = data.bots || [];
     setBotOnlineState(bots);
     $("#botVersion").textContent = data.version ? `v${data.version}` : "";
+    $("#webuiVersion").textContent = (data.webuiVersion || state.webuiVersion) ? `WebUI v${data.webuiVersion || state.webuiVersion}` : "";
 
     const bot = bots.find(item => item.isQQ);
     $("#botName").textContent = bot && bot.nickname ? bot.nickname : data.botName || "Yunzai Bot";

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url"
 import { render as renderImage } from "../compat/renderer.js"
 import cfg from "../compat/config.js"
 import { isBotOnline } from "../compat/bots.js"
+import { WEBUI_VERSION } from "../paths.js"
 
 const tplFile = fileURLToPath(new URL("./resources/status.html", import.meta.url))
 const IS_WIN = process.platform === "win32"
@@ -1410,6 +1411,7 @@ export async function collectStatus(e, { pro = false } = {}) {
     footer: {
       line1: `Created By Yunzai v${cfg.package?.version || ""}`,
       line2: [`Node ${process.version}`, `V8 ${process.versions.v8 || ""}`, git && `Git ${git}`, fullClock()].filter(Boolean).join(" & "),
+      line3: WEBUI_VERSION ? `WebUI v${WEBUI_VERSION}` : "",
     },
   }
 }

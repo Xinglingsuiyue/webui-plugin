@@ -3,6 +3,7 @@ import AIManager from "../AIManager.js"
 import { aiAdmin } from "../AIAdminStore.js"
 import puppeteer from "../../../../lib/puppeteer/puppeteer.js"
 import { fileURLToPath } from "node:url"
+import { WEBUI_VERSION } from "../../paths.js"
 
 const tplFile = fileURLToPath(new URL("./resources/persona.html", import.meta.url))
 const RESET_WORDS = new Set(["默认", "主人格"])
@@ -177,6 +178,7 @@ export class AiPersona extends plugin {
       canSwitch: can,
       permissionText: can ? "" : permissionHint(e),
       total: presets.length,
+      webuiVersion: WEBUI_VERSION,
       presets: presets.map((preset, index) => ({
         ...preset,
         index: index + 1,

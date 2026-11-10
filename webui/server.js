@@ -63,6 +63,7 @@ import { listHelpIcons, saveHelpIcon, readHelpIconFile } from "../help/icons.js"
 import { createHelpBackup, listHelpBackups, restoreHelpBackup } from "../help/backup.js"
 import { botProtocol, collectGauges } from "../status/index.js"
 import { registerTerminalRoutes } from "./terminal.js"
+import { WEBUI_VERSION } from "../paths.js"
 
 const BASE_DIR = path.dirname(fileURLToPath(import.meta.url))
 const PUBLIC_DIR = path.join(BASE_DIR, "public")
@@ -727,6 +728,7 @@ function buildApp(opts) {
       allowWrite: current.allowWrite,
       basePath: current.basePath,
       version: cfg.package?.version || "",
+      webuiVersion: WEBUI_VERSION,
     })
   })
 
@@ -795,6 +797,7 @@ function buildApp(opts) {
       res.json({
         now: Date.now(),
         version: cfg.package?.version || "",
+        webuiVersion: WEBUI_VERSION,
         botName: cfg.bot?.name || "",
         startType: global.start_type || "",
         node: process.version,
