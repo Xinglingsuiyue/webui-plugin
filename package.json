@@ -1,7 +1,7 @@
 {
   "name": "webui-plugin",
   "version": "1.0.0",
-  "description": "TRSS-Yunzai WebUI 控制台与 AI 对话扩展（可直接放入原版 plugins 目录运行）",
+  "description": "Yunzai 控制台与 AI 扩展",
   "type": "module",
   "main": "index.js",
   "private": true
