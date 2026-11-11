@@ -195,7 +195,6 @@ export class WebPanelUpdate extends plugin {
     if (result.upToDate) return this.reply(`webui-plugin已经是最新版本\n最后更新时间：${result.time}`)
 
     await this.reply(`webui-plugin\n最后更新时间：${result.time}`)
-    await this.reply("更新完成，正在重启")
     await restartBot(this.e)
   }
 }
