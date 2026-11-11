@@ -677,6 +677,77 @@ function chatMessageText(item, images) {
   return text
 }
 
+function chatProtocolModule(client) {
+  const icqq = client?.icqq
+  return icqq && typeof icqq.parseGroupMessageId === "function" ? icqq : null
+}
+
+function chatCachedSeq(client, kind, botId, targetId) {
+  const protocol = chatProtocolModule(client)
+  if (!protocol) return 0
+  const parse = kind === "group" ? protocol.parseGroupMessageId : protocol.parseDmMessageId
+  if (typeof parse !== "function") return 0
+  const list = recentChats.get(recentChatKey(kind, botId, targetId)) || []
+  for (let index = list.length - 1; index >= 0; index--) {
+    try {
+      const seq = Number(parse(list[index].id)?.seq)
+      if (seq > 0) return seq
+    } catch {}
+  }
+  return 0
+}
+
+function chatFriendNames(client) {
+  const names = new Map()
+  const list = client?.fl
+  if (!list || typeof list.forEach !== "function") return names
+  list.forEach((info, id) => {
+    const name = info?.remark || info?.nickname || ""
+    if (name) names.set(String(id), name)
+  })
+  return names
+}
+
+function chatHistorySources(kind, targetId, target, client) {
+  const sources = []
+  if (typeof target?.getChatHistory === "function") sources.push(target)
+  try {
+    const raw = client?.sdk
+    if (raw && typeof raw.pickGroup === "function") {
+      const id = Number(targetId) || targetId
+      const pick = kind === "group" ? raw.pickGroup(id) : raw.pickFriend(id)
+      if (pick && pick !== target && typeof pick.getChatHistory === "function") sources.push(pick)
+    }
+  } catch {}
+  return sources
+}
+
+async function fetchChatHistory(kind, botId, targetId, target, client, count) {
+  const sources = chatHistorySources(kind, targetId, target, client)
+  if (!sources.length) return { supported: false, messages: [] }
+  const icqq = chatProtocolModule(client)
+  let error = null
+  for (const source of sources) {
+    const attempts = []
+    if (kind === "friend" && icqq) {
+      attempts.push([undefined, count], [0, count])
+    } else {
+      const seq = icqq ? chatCachedSeq(client, kind, botId, targetId) : 0
+      if (seq) attempts.push([seq, count])
+      attempts.push([0, count])
+    }
+    for (const args of attempts) {
+      try {
+        const list = await AIManager._withTimeout(source.getChatHistory(...args), 8000)
+        if (Array.isArray(list) && list.length) return { supported: true, messages: list }
+      } catch (err) {
+        error ||= err
+      }
+    }
+  }
+  return { supported: true, messages: [], error }
+}
+
 function normalizeChatMessage(item, selfId = "") {
   const sender = item?.sender || {}
   const userId = String(item?.user_id ?? sender.user_id ?? "")
@@ -767,16 +838,15 @@ async function chatMessageSentAt(kind, botId, targetId, target, messageId) {
       if (time) return time
     } catch {}
   }
-  if (typeof target?.getChatHistory === "function") {
-    try {
-      const history = await AIManager._withTimeout(target.getChatHistory(0, 50), 8000)
-      for (const item of Array.isArray(history) ? history : []) {
-        if (String(item?.message_id ?? item?.id ?? "") !== String(messageId)) continue
-        const time = chatTimestamp(item?.time)
-        if (time) return time
-      }
-    } catch {}
-  }
+  try {
+    const client = botId ? Bot.bots?.[botId] : null
+    const history = await fetchChatHistory(kind, botId, targetId, target, client, 50)
+    for (const item of history.messages) {
+      if (String(item?.message_id ?? item?.id ?? "") !== String(messageId)) continue
+      const time = chatTimestamp(item?.time)
+      if (time) return time
+    }
+  } catch {}
   return 0
 }
 
@@ -3624,28 +3694,35 @@ function buildApp(opts) {
       const markRecalled = messages =>
         messages.map(item => (recalled.has(item.id) ? { ...item, recalled: true } : item))
 
-      if (typeof target?.getChatHistory !== "function")
+      const history = await fetchChatHistory(kind, botId, targetId, target, client, count)
+      if (!history.supported)
         return res.json({
           ok: true,
           supported: false,
           messages: markRecalled(cachedChatMessages(kind, botId, targetId, count)),
         })
 
-      let history
-      try {
-        history = await AIManager._withTimeout(target.getChatHistory(0, count), 8000)
-      } catch (error) {
-        return fail(res, 502, `读取消息失败：${error?.message || "协议端未响应"}`)
-      }
-
       const selfId = String(client?.uin ?? botId)
+      const names = kind === "friend" ? chatFriendNames(client) : null
       const messages = markRecalled(
-        (Array.isArray(history) ? history : [])
-          .map(item => normalizeChatMessage(item, selfId))
+        history.messages
+          .map(item => {
+            const message = normalizeChatMessage(item, selfId)
+            if (names && message.name === message.userId) message.name = names.get(message.userId) || message.name
+            return message
+          })
           .filter(item => item.text || item.images.length)
           .sort((a, b) => a.time - b.time)
           .slice(-count),
       )
+
+      if (!messages.length) {
+        const cached = markRecalled(cachedChatMessages(kind, botId, targetId, count))
+        if (cached.length) return res.json({ ok: true, supported: true, messages: cached })
+        if (history.error)
+          return fail(res, 502, `读取消息失败：${history.error?.message || "协议端未响应"}`)
+      }
+
       res.json({ ok: true, supported: true, messages })
     }),
   )
