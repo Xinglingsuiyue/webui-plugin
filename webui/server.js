@@ -1043,6 +1043,11 @@ function chatClientIsQQBot(client) {
   return String(client?.adapter?.name || "") === "QQBot"
 }
 
+function chatReactApi(client) {
+  if (String(client?.adapter?.name || "") !== "OneBotv11") return null
+  return typeof client?.sendApi === "function" ? client.sendApi.bind(client) : null
+}
+
 async function chatMessageSenderId(kind, botId, targetId, target, messageId) {
   const cached = findCachedChatMessage(kind, botId, targetId, messageId)
   if (cached?.userId) return String(cached.userId)
@@ -3884,7 +3889,9 @@ function buildApp(opts) {
       const capabilities = {
         recall: typeof target?.recallMsg === "function",
         quote: typeof target?.sendMsg === "function",
-        react: kind === "group" && typeof target?.setMsgEmojiLike === "function",
+        react:
+          kind === "group" &&
+          (typeof target?.setMsgEmojiLike === "function" || !!chatReactApi(client)),
         recallOthers: kind === "group" && (isQQBot || manager),
         manager,
       }
@@ -4062,15 +4069,23 @@ function buildApp(opts) {
         .replace(/[\u0000-\u001f\u007f]/g, "")
 
       const botId = String(body.botId ?? "").trim()
-      const { target, error } = resolveChatTarget(kind, targetId, botId)
+      const { client, target, error } = resolveChatTarget(kind, targetId, botId)
       if (error) return fail(res, 400, error)
-      if (typeof target?.setMsgEmojiLike !== "function")
-        return fail(res, 400, "该账号不支持贴表情")
+      const reactApi = chatReactApi(client)
+      const hasReact = typeof target?.setMsgEmojiLike === "function"
+      if (!hasReact && !reactApi) return fail(res, 400, "该账号不支持贴表情")
 
+      const messageIdValue = /^-?\d+$/.test(messageId) ? Number(messageId) : messageId
       let result
       try {
         result = await AIManager._withTimeout(
-          target.setMsgEmojiLike(messageId, emojiId, body.set !== false),
+          hasReact
+            ? target.setMsgEmojiLike(messageId, emojiId, body.set !== false)
+            : reactApi("set_msg_emoji_like", {
+                message_id: messageIdValue,
+                emoji_id: String(emojiId),
+                set: body.set !== false,
+              }),
           8000,
         )
       } catch (error) {
