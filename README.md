@@ -74,4 +74,4 @@ git clone --depth=1 https://github.com/Xinglingsuiyue/webui-plugin.git
 | [guoba-plugin](https://gitee.com/guoba-yunzai/guoba-plugin) | 锅巴的 guoba-plugin |
 | [zhishui-plugin](https://gitee.com/fjcq/zhishui-plugin) | 止水的 zhishui-plugin |
 | [yenai-plugin](https://gitee.com/yeyang52/yenai-plugin) | 椰羊的 yenai-plugin |
-| [miao-plugin](https://gitcode.com/TimeRainStarSky/miao-plugin) | 喵喵的 miao-plugin |
+| [miao-plugin](https://github.com/yoimiya-kokomi/miao-plugin) | 喵喵的 miao-plugin |

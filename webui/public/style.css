@@ -4268,7 +4268,7 @@ a.plugin-link:hover { color: var(--blue); }
   pointer-events: none;
   background: transparent;
   border: 0;
-  font-size: 16px; /* 低于 16px 时 iOS 聚焦会自动放大页面 */
+  font-size: 16px;
 }
 
 .term-keys {

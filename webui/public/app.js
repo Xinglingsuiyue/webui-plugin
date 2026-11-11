@@ -6642,6 +6642,7 @@
   }
 
   function renderChatThread(log, messages, emptyText = "暂无消息") {
+    messages = messages.filter(item => !(item.recalled && item.recalledBySelf))
     if (!messages.length) {
       log.innerHTML = `<div class="chat-empty">${esc(emptyText)}</div>`
       return
@@ -6913,7 +6914,9 @@
       recalling = true
       try {
         await api("/groups/recall", { method: "POST", body: { kind, id, botId, messageId } })
-        messages = messages.map(item => (item.id === messageId ? { ...item, recalled: true } : item))
+        messages = messages.map(item =>
+          item.id === messageId ? { ...item, recalled: true, recalledBySelf: true } : item,
+        )
         if (reply?.id === messageId) clearReply()
         renderChatThread(log, messages, "暂无消息")
         toast("已撤回")
