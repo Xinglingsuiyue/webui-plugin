@@ -1050,6 +1050,13 @@ function chatReactApi(client) {
   return typeof client?.sendApi === "function" ? client.sendApi.bind(client) : null
 }
 
+function chatReactLagrange(client) {
+  const version = client?.version || {}
+  return /lagrange/i.test(
+    String(version.app_name || version.app_full_name || version.version || ""),
+  )
+}
+
 async function chatMessageSenderId(kind, botId, targetId, target, messageId) {
   const cached = findCachedChatMessage(kind, botId, targetId, messageId)
   if (cached?.userId) return String(cached.userId)
@@ -4090,16 +4097,24 @@ function buildApp(opts) {
       if (!hasReact && !reactApi) return fail(res, 400, "该账号不支持贴表情")
 
       const messageIdValue = /^-?\d+$/.test(messageId) ? Number(messageId) : messageId
+      const lagrange = chatReactLagrange(client)
       let result
       try {
         result = await AIManager._withTimeout(
           hasReact
             ? target.setMsgEmojiLike(messageId, emojiId, body.set !== false)
-            : reactApi("set_msg_emoji_like", {
-                message_id: messageIdValue,
-                emoji_id: String(emojiId),
-                set: body.set !== false,
-              }),
+            : lagrange
+              ? reactApi("set_group_reaction", {
+                  group_id: Number(targetId),
+                  message_id: messageIdValue,
+                  code: String(emojiId),
+                  is_add: body.set !== false,
+                })
+              : reactApi("set_msg_emoji_like", {
+                  message_id: messageIdValue,
+                  emoji_id: String(emojiId),
+                  set: body.set !== false,
+                }),
           8000,
         )
       } catch (error) {
