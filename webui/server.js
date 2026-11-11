@@ -722,11 +722,87 @@ function chatHistorySources(kind, targetId, target, client) {
   return sources
 }
 
-async function fetchChatHistory(kind, botId, targetId, target, client, count) {
-  const sources = chatHistorySources(kind, targetId, target, client)
-  if (!sources.length) return { supported: false, messages: [] }
-  const icqq = chatProtocolModule(client)
+function chatCachedMessageId(client, kind, botId, targetId) {
+  const list = recentChats.get(recentChatKey(kind, botId, targetId)) || []
+  for (let index = list.length - 1; index >= 0; index--) {
+    const id = String(list[index].id ?? "")
+    if (id && id !== "0" && id !== "undefined") return id
+  }
+  return ""
+}
+
+function chatOneBotMessages(result) {
+  const data = result?.data ?? result
+  if (Array.isArray(data?.messages)) return data.messages
+  if (Array.isArray(data)) return data
+  return []
+}
+
+function chatParseOneBotMessage(client, kind, targetId, item) {
+  if (!item || typeof item !== "object") return null
+  const content = item.message ?? item.content
+  if (typeof content === "string") {
+    const owner = typeof client?.parseMsg === "function" ? client : client?.adapter
+    const parse = owner?.parseMsg
+    if (typeof parse === "function")
+      try {
+        item.message = parse.call(owner, content)
+      } catch {}
+  }
+  if (!item.sender) {
+    const members = kind === "group" ? client?.gml?.get?.(Number(targetId)) : null
+    item.sender = members?.get?.(item.user_id) || client?.fl?.get?.(item.user_id) || { user_id: item.user_id }
+  }
+  return item
+}
+
+async function fetchOneBotHistory(client, kind, targetId, botId, count) {
+  if (typeof client?.sendApi !== "function") return null
+  const numeric = /^\d{1,15}$/.test(targetId) ? Number(targetId) : 0
+  if (!numeric) return null
+  const action = kind === "group" ? "get_group_msg_history" : "get_friend_msg_history"
+  const base =
+    kind === "group"
+      ? { group_id: numeric, count, reverseOrder: true }
+      : { user_id: numeric, count, reverseOrder: true }
+  const attempts = [base]
+  if (kind === "friend") attempts.push({ ...base, message_seq: -count })
+  const anchor = chatCachedMessageId(client, kind, botId, targetId)
+  if (anchor) attempts.push({ ...base, message_id: anchor })
   let error = null
+  let responded = false
+  for (const params of attempts) {
+    let result
+    try {
+      result = await AIManager._withTimeout(client.sendApi(action, params), 8000)
+      responded = true
+    } catch (err) {
+      error ||= err
+      continue
+    }
+    const list = chatOneBotMessages(result)
+    const messages = list
+      .map(item => chatParseOneBotMessage(client, kind, numeric, item))
+      .filter(Boolean)
+    if (messages.length) return messages
+  }
+  if (error && !responded) throw error
+  return []
+}
+
+async function fetchChatHistory(kind, botId, targetId, target, client, count) {
+  let error = null
+  if (typeof client?.sendApi === "function") {
+    try {
+      const messages = await fetchOneBotHistory(client, kind, targetId, botId, count)
+      if (messages) return { supported: true, messages, error }
+    } catch (err) {
+      return { supported: true, messages: [], error: err }
+    }
+  }
+  const sources = chatHistorySources(kind, targetId, target, client)
+  if (!sources.length) return { supported: false, messages: [], error }
+  const icqq = chatProtocolModule(client)
   for (const source of sources) {
     const attempts = []
     if (kind === "friend" && icqq) {
