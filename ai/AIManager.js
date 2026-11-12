@@ -11,6 +11,7 @@ import { registerKnowledgeTools } from "./builtin/knowledge.js"
 import { registerUtilityTools } from "./builtin/utility.js"
 import { registerChatTools } from "./builtin/chat.js"
 import { registerActionTools } from "./builtin/actions.js"
+import { registerLaunchTools } from "./builtin/launch.js"
 import { normalizeGroupId } from "../compat/config.js"
 import { compressMemories } from "./AIMemorySummarizer.js"
 import {
@@ -236,6 +237,7 @@ export default class AIManager {
     })
     registerChatTools()
     registerActionTools()
+    registerLaunchTools()
 
     AIToolRegistry.builtinCaller = (name, args, e) => mcpManager.callBuiltinTool(name, args, e)
     mcpManager.refreshBuiltin()
@@ -556,6 +558,7 @@ export default class AIManager {
     })
     registerChatTools()
     registerActionTools()
+    registerLaunchTools()
     mcpManager.refreshBuiltin()
     return AIToolRegistry.tools.size
   }
@@ -3658,7 +3661,18 @@ export default class AIManager {
     }
 
     if (AIManager._selfIntent(userMessage)) add("self_profile")
+    if (AIManager._launchIntent(userMessage)) {
+      add("launch_program")
+      add("find_program")
+    }
     return names
+  }
+
+  static _launchIntent(text) {
+    if (cfg.ai?.enableLaunchProgram !== true) return false
+    const value = String(text || "")
+    if (/启动|运行|打开|开一下/.test(value)) return true
+    return /程序|软件|应用|exe/i.test(value) && /找|查|搜索|有什么|装了哪些/.test(value)
   }
 
   static _selfIntent(text) {

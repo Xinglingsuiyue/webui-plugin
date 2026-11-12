@@ -6759,6 +6759,7 @@
     const canWrite = state.allowWrite
     let messages = []
     let closed = false
+    let watchAbort = null
     let capabilities = { recall: true, quote: true, react: false, recallOthers: false }
     let reply = null
     let menu = null
@@ -6795,6 +6796,8 @@
       </div>`,
       onClose: () => {
         closed = true
+        watchAbort?.abort()
+        watchAbort = null
         closeMenu()
       },
     })
@@ -6843,6 +6846,97 @@
     }
 
     const params = new URLSearchParams({ kind, id, botId: botId || "", count: "20" })
+    const pendingMessages = []
+    const pendingRecalls = []
+    let historyReady = false
+
+    const rerenderChat = () => {
+      const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40
+      const top = log.scrollTop
+      renderChatThread(log, messages, "暂无消息")
+      if (!atBottom) log.scrollTop = top
+    }
+
+    const upsertMessage = incoming => {
+      const messageId = String(incoming.id || "")
+      let index = messageId
+        ? messages.findIndex(item => item.id && String(item.id) === messageId)
+        : -1
+      if (index < 0 && incoming.self === true)
+        index = messages.findIndex(
+          item =>
+            item.local &&
+            item.self === true &&
+            item.text === incoming.text &&
+            Math.abs((item.time || item.at || 0) - (incoming.time || 0)) < 120000,
+        )
+      if (index >= 0) Object.assign(messages[index], incoming, { local: false })
+      else messages.push(incoming)
+    }
+
+    const applyIncomingMessage = incoming => {
+      if (closed || !incoming) return
+      if (!historyReady) {
+        pendingMessages.push(incoming)
+        return
+      }
+      upsertMessage(incoming)
+      messages.sort((a, b) => (a.time || a.at || 0) - (b.time || b.at || 0))
+      rerenderChat()
+    }
+
+    const applyRecall = data => {
+      const messageId = String(data?.messageId || "")
+      if (!messageId) return
+      const index = messages.findIndex(item => String(item.id) === messageId)
+      if (index < 0) return false
+      messages[index] = {
+        ...messages[index],
+        recalled: true,
+        recalledBySelf: data.recalledBySelf === true,
+      }
+      return true
+    }
+
+    const applyRecallEvent = data => {
+      if (closed || !data) return
+      if (!historyReady) {
+        pendingRecalls.push(data)
+        return
+      }
+      if (applyRecall(data)) rerenderChat()
+    }
+
+    const flushPendingChat = () => {
+      for (const incoming of pendingMessages.splice(0)) upsertMessage(incoming)
+      messages.sort((a, b) => (a.time || a.at || 0) - (b.time || b.at || 0))
+      for (const data of pendingRecalls.splice(0)) applyRecall(data)
+    }
+
+    const startWatch = () => {
+      if (closed || watchAbort) return
+      watchAbort = new AbortController()
+      const signal = watchAbort.signal
+      const loop = async () => {
+        while (!closed && !signal.aborted) {
+          try {
+            await apiSSE(
+              "/groups/watch",
+              { kind, id, botId: botId || "" },
+              { chat: data => applyIncomingMessage(data?.message), recall: applyRecallEvent },
+              signal,
+            )
+          } catch (error) {
+            if (closed || signal.aborted) return
+          }
+          if (closed || signal.aborted) return
+          await new Promise(resolve => window.setTimeout(resolve, 2000))
+        }
+      }
+      loop()
+    }
+
+    startWatch()
     api(`/groups/history?${params.toString()}`)
       .then(data => {
         if (closed) return
@@ -6850,11 +6944,15 @@
           capabilities = { ...capabilities, ...data.capabilities }
         const history = Array.isArray(data.messages) ? data.messages : []
         messages = mergeHistory(history)
+        historyReady = true
+        flushPendingChat()
         const empty = data.supported === false ? "该账号无法读取历史消息" : "暂无消息"
         renderChatThread(log, messages, empty)
       })
       .catch(error => {
         if (closed) return
+        historyReady = true
+        flushPendingChat()
         renderChatThread(log, messages, "历史消息加载失败")
         handleError(error)
       })
@@ -8874,6 +8972,10 @@
             "maxContextTokens", "maxHistoryTurns", "enableCompression", "compressionThreshold",
             "compressionKeepRecentTurns", "compressionSummaryMaxLength",
           ],
+        },
+        {
+          title: "本机程序",
+          keys: ["enableLaunchProgram"],
         },
       ],
       wideKeys: ["masterName"],

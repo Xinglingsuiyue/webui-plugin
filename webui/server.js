@@ -931,6 +931,16 @@ function cachedChatMessages(kind, botId, id, count) {
   return (recentChats.get(recentChatKey(kind, botId, id)) || []).slice(-count)
 }
 
+const chatSubscribers = new Set()
+
+function broadcastChatUpdate(kind, botId, id, event, data) {
+  for (const sub of chatSubscribers) {
+    if (sub.kind !== kind || sub.id !== id) continue
+    if (sub.botId && botId && sub.botId !== String(botId)) continue
+    writeSSE(sub.res, event, data)
+  }
+}
+
 function rememberChatReaction(kind, botId, id, messageId, reaction) {
   const target = String(messageId ?? "")
   if (!target || !reaction?.emojiId) return
@@ -1120,6 +1130,21 @@ function resolveChatTarget(kind, targetId, botId) {
   }
 }
 
+function initSSE(res) {
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8")
+  res.setHeader("Cache-Control", "no-cache")
+  res.setHeader("Connection", "keep-alive")
+  res.setHeader("Content-Encoding", "identity")
+  res.setHeader("X-Accel-Buffering", "no")
+  res.flushHeaders?.()
+}
+
+function writeSSE(res, event, data) {
+  if (res.writableEnded || res.destroyed) return
+  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+  res.flush?.()
+}
+
 function watchChatMessages() {
   const bus = globalThis.Bot
   if (typeof bus?.on !== "function" || typeof bus?.off !== "function") return () => {}
@@ -1128,7 +1153,10 @@ function watchChatMessages() {
       const targetId = String(kind === "group" ? event?.group_id ?? "" : event?.user_id ?? "")
       if (!targetId) return
       const botId = String(event?.self_id ?? "")
-      rememberChatMessage(kind, botId, targetId, normalizeChatMessage(event, botId))
+      const message = normalizeChatMessage(event, botId)
+      rememberChatMessage(kind, botId, targetId, message)
+      if (message.text || message.images.length)
+        broadcastChatUpdate(kind, botId, targetId, "chat", { message })
     } catch {}
   }
   const forget = kind => event => {
@@ -1137,13 +1165,11 @@ function watchChatMessages() {
       if (!targetId) return
       const selfId = String(event?.self_id ?? "")
       const operatorId = String(event?.operator_id ?? event?.user_id ?? "")
-      recallCachedMessage(
-        kind,
-        selfId,
-        targetId,
-        event?.message_id,
-        !!selfId && operatorId === selfId,
-      )
+      const messageId = String(event?.message_id ?? "")
+      const recalledBySelf = !!selfId && operatorId === selfId
+      recallCachedMessage(kind, selfId, targetId, messageId, recalledBySelf)
+      if (messageId)
+        broadcastChatUpdate(kind, selfId, targetId, "recall", { messageId, recalledBySelf })
     } catch {}
   }
   const handlers = [
@@ -1360,6 +1386,7 @@ function buildApp(opts) {
 
   router.use((req, res, next) => {
     if (req.method === "GET" || req.method === "HEAD") return next()
+    if (req.path === "/groups/watch") return next()
     return requireWrite(req, res, next)
   })
 
@@ -1597,7 +1624,11 @@ function buildApp(opts) {
           ].some(key => paths.has(key))
         )
           reloadKnowledgeBase()
-        if (paths.has("disabledTools") || paths.has("disabledToolPlugins")) {
+        if (
+          paths.has("disabledTools") ||
+          paths.has("disabledToolPlugins") ||
+          paths.has("enableLaunchProgram")
+        ) {
           AIToolRegistry.builtinDisabledTools = [
             ...(aiAdmin.toolConfig?.disabledTools || []),
             ...(cfg.ai?.disabledTools || []),
@@ -2183,21 +2214,6 @@ function buildApp(opts) {
         client.baseURL,
       )
     )
-  }
-
-  function initSSE(res) {
-    res.setHeader("Content-Type", "text/event-stream; charset=utf-8")
-    res.setHeader("Cache-Control", "no-cache")
-    res.setHeader("Connection", "keep-alive")
-    res.setHeader("Content-Encoding", "identity")
-    res.setHeader("X-Accel-Buffering", "no")
-    res.flushHeaders?.()
-  }
-
-  function writeSSE(res, event, data) {
-    if (res.writableEnded || res.destroyed) return
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
-    res.flush?.()
   }
 
   router.get("/ai/runtime", (req, res) => {
@@ -3967,6 +3983,28 @@ function buildApp(opts) {
   )
 
   router.post(
+    "/groups/watch",
+    asyncRoute(async (req, res) => {
+      const body = req.body || {}
+      const kind = body.kind === "group" ? "group" : body.kind === "friend" ? "friend" : ""
+      if (!kind) return fail(res, 400, "消息类型无效")
+      const targetId = String(body.id ?? "").trim()
+      if (!targetId) return fail(res, 400, kind === "group" ? "缺少群号" : "缺少账号")
+      const botId = String(body.botId ?? "").trim()
+
+      initSSE(res)
+      const subscription = { kind, id: targetId, botId, res }
+      chatSubscribers.add(subscription)
+      writeSSE(res, "ready", { at: Date.now() })
+      const heartbeat = setInterval(() => writeSSE(res, "ping", { at: Date.now() }), 25000)
+      res.on("close", () => {
+        clearInterval(heartbeat)
+        chatSubscribers.delete(subscription)
+      })
+    }),
+  )
+
+  router.post(
     "/groups/send",
     asyncRoute(async (req, res) => {
       const body = req.body || {}
@@ -4218,6 +4256,12 @@ export function mountWebUI() {
     basePath: opts.basePath,
     dispose() {
       stopChatWatch()
+      for (const sub of chatSubscribers) {
+        try {
+          sub.res.end()
+        } catch {}
+      }
+      chatSubscribers.clear()
       for (const layer of added) {
         const index = stack.indexOf(layer)
         if (index !== -1) stack.splice(index, 1)

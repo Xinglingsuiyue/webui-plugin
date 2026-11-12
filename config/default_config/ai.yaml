@@ -89,6 +89,8 @@ toolResultMaxLength: 4000
 disabledTools: []
 # 禁止 AI 调用的插件名列表
 disabledToolPlugins: []
+# 本地执行
+enableLaunchProgram: false
 
 # ===================== 知识库 =====================
 # 启用知识库
