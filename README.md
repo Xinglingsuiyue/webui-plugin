@@ -2,9 +2,8 @@
 
 # webui-plugin
 
-Yunzai 使用的控制台插件。放进 `plugins` 目录即可运行，不改框架任何文件。
-
-管理插件与配置，内置 AI 对话能力，自带帮助面板与状态图。
+- 一个适用于 [Yunzai 系列机器人框架](https://github.com/yhArcadia/Yunzai-Bot-plugins-index) 的Yunzai控制台插件
+- 支持插件管理安装与配置，内置 AI 对话能力，带帮助面板与状态图。
 
 ## 安装
 
@@ -13,9 +12,6 @@ cd plugins
 git clone --depth=1 https://github.com/Xinglingsuiyue/webui-plugin.git
 ```
 
-依赖由 Yunzai 本体提供（express、art-template、yaml、lodash、moment、strip-ansi、https-proxy-agent），无需额外安装。
-
-装好后重启 Yunzai。
 
 ## 使用
 
