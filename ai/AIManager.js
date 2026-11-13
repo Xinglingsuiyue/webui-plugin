@@ -1313,7 +1313,8 @@ export default class AIManager {
       buffer = ""
       if (!text) return
 
-      for (const piece of splitBySentence(text, softLimit)) send(piece)
+      const pieces = splitBySentence(text, softLimit)
+      for (const piece of pieces) send(piece)
     }
 
     return {
@@ -1576,6 +1577,7 @@ export default class AIManager {
 
   static _passesTrigger(e) {
     if (AIManager._isPokeEvent(e)) return true
+    if (e.sub_type === "callback") return true
     if (e.isPrivate) return true
     if (e.isMaster && cfg.ai?.masterFree !== false) return true
     if (e.presetPrefix) return true
@@ -1589,6 +1591,7 @@ export default class AIManager {
 
   static async _shouldReply(e) {
     if (AIManager._isPokeEvent(e)) return true
+    if (e.sub_type === "callback") return true
     if (e.isPrivate) return true
     if (e.isMaster && cfg.ai?.masterFree !== false) return true
     if (e.presetPrefix) return true
@@ -1771,6 +1774,7 @@ export default class AIManager {
         .replace(/\[CQ:(?:reply|at|face|mface|dice|rps)[^\]]*\]/g, "")
 
         .replace(/<(?:image|face|at|video|audio|reply|ark|embed|markdown|button|link)\b[^>]*>/gi, "")
+        .replace(/\[回复：[^\]]*\]/g, "")
         .trim()
     )
   }
@@ -1984,8 +1988,8 @@ export default class AIManager {
         } else {
           const chunks = []
           for (let i = 0; i < content.length; i += 1800) chunks.push(content.slice(i, i + 1800))
-          for (const chunk of chunks) {
-            const res = await e.reply(chunk, aiCfg.replyQuote === true)
+          for (let i = 0; i < chunks.length; i++) {
+            const res = await e.reply(chunks[i], aiCfg.replyQuote === true)
             if (AIManager._replyFailed(res)) {
               sendError = res.error?.[0] || new Error("发送失败")
               break
