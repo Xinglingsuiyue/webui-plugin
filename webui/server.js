@@ -2054,6 +2054,18 @@ function chatOutgoingSegments(msg) {
     else if (type === "file") {
       const name = String(part.name ?? part.file ?? part.data?.name ?? "").trim()
       segments.push({ type: "text", text: name ? `[文件 ${name}]` : "[文件]" })
+    } else if (type === "markdown") {
+      const raw = String(part.content ?? part.data?.content ?? part.data ?? "").trim()
+      if (raw) {
+        const parsed = chatMarkdownParts(raw)
+        if (parsed) {
+          segments.push(...parsed.segments)
+          for (const image of parsed.images) {
+            if (!segments.some(item => item.type === "image" && item.url === image.url))
+              segments.push({ type: "image", ...image })
+          }
+        } else segments.push({ type: "text", text: raw })
+      }
     } else if (type === "button") collectButtons(part.data ?? part.buttons)
     else if (type === "keyboard") collectButtons(part.content?.rows)
     else if (type === "reply") quoteId = String(part.id ?? part.data?.id ?? "").trim()
