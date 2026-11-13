@@ -1427,6 +1427,7 @@ export default class AIManager {
 
     if (e?.sender?.is_bot === true) return true
     if (e?.isBot === true) return true
+    if (e?.raw?.author?.bot === true || e?.raw?.author?.bot === "true") return true
     return false
   }
 
