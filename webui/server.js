@@ -3,7 +3,7 @@ import crypto from "node:crypto"
 import fs from "node:fs/promises"
 import fsSync from "node:fs"
 import path from "node:path"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import stripAnsi from "strip-ansi"
 import cfg, { isGroupId, normalizeGroupId } from "../compat/config.js"
 import { isBotOnline } from "../compat/bots.js"
@@ -1664,6 +1664,55 @@ function chatReactLagrange(client) {
   return /lagrange/i.test(
     String(version.app_name || version.app_full_name || version.version || ""),
   )
+}
+
+let chatIcqqModuleTask = null
+
+async function chatIcqqModule() {
+  if (!chatIcqqModuleTask)
+    chatIcqqModuleTask = (async () => {
+      for (const entry of [
+        "plugins/ICQQ-Plugin/node_modules/icqq/lib/index.js",
+        "node_modules/icqq/lib/index.js",
+      ]) {
+        try {
+          const mod = await import(pathToFileURL(path.resolve(process.cwd(), entry)).href)
+          const lib = mod?.default && typeof mod.default === "object" ? mod.default : mod
+          if (typeof lib?.parseGroupMessageId === "function" && typeof lib?.core?.pb?.encode === "function")
+            return lib
+        } catch {}
+      }
+      return null
+    })()
+  return chatIcqqModuleTask
+}
+
+function chatIcqqReactTarget(kind, target) {
+  if (kind !== "group" || !target) return null
+  try {
+    if (typeof target.c?.sendOidbSvcTrpcTcp !== "function") return null
+    const gid = Number(target.gid ?? target.group_id ?? 0)
+    return gid > 0 ? { pick: target, gid } : null
+  } catch {
+    return null
+  }
+}
+
+async function chatIcqqReact(kind, target, messageId, emojiId, set) {
+  const entry = chatIcqqReactTarget(kind, target)
+  if (!entry) throw new Error("该账号不支持贴表情")
+  const lib = await chatIcqqModule()
+  if (!lib) throw new Error("该账号不支持贴表情")
+  let parsed
+  try {
+    parsed = lib.parseGroupMessageId(String(messageId))
+  } catch {
+    throw new Error("无法解析消息 ID")
+  }
+  if (Number(parsed?.group_id) !== entry.gid) throw new Error("消息不属于该群")
+  const code = String(emojiId)
+  const body = lib.core.pb.encode({ 2: entry.gid, 3: parsed.seq, 4: code, 5: code.length > 3 ? 2 : 1 })
+  return entry.pick.c.sendOidbSvcTrpcTcp(`OidbSvcTrpcTcp.0x9082_${set === false ? 2 : 1}`, body)
 }
 
 async function chatMessageSenderId(kind, botId, targetId, target, messageId) {
@@ -4804,7 +4853,9 @@ function buildApp(opts) {
         quote: typeof target?.sendMsg === "function",
         react:
           kind === "group" &&
-          (typeof target?.setMsgEmojiLike === "function" || !!chatReactApi(client)),
+          (typeof target?.setMsgEmojiLike === "function" ||
+            !!chatReactApi(client) ||
+            !!chatIcqqReactTarget(kind, target)),
         recallOthers: kind === "group" && (isQQBot || manager),
         poke: !!canPoke,
         manager,
@@ -5302,7 +5353,8 @@ function buildApp(opts) {
       if (error) return fail(res, 400, error)
       const reactApi = chatReactApi(client)
       const hasReact = typeof target?.setMsgEmojiLike === "function"
-      if (!hasReact && !reactApi) return fail(res, 400, "该账号不支持贴表情")
+      const icqqReact = !hasReact && !reactApi ? chatIcqqReactTarget(kind, target) : null
+      if (!hasReact && !reactApi && !icqqReact) return fail(res, 400, "该账号不支持贴表情")
 
       const messageIdValue = /^-?\d+$/.test(messageId) ? Number(messageId) : messageId
       const lagrange = chatReactLagrange(client)
@@ -5311,18 +5363,20 @@ function buildApp(opts) {
         result = await AIManager._withTimeout(
           hasReact
             ? target.setMsgEmojiLike(messageId, emojiId, body.set !== false)
-            : lagrange
-              ? reactApi("set_group_reaction", {
-                  group_id: Number(targetId),
-                  message_id: messageIdValue,
-                  code: String(emojiId),
-                  is_add: body.set !== false,
-                })
-              : reactApi("set_msg_emoji_like", {
-                  message_id: messageIdValue,
-                  emoji_id: String(emojiId),
-                  set: body.set !== false,
-                }),
+            : icqqReact
+              ? chatIcqqReact(kind, target, messageId, emojiId, body.set !== false)
+              : lagrange
+                ? reactApi("set_group_reaction", {
+                    group_id: Number(targetId),
+                    message_id: messageIdValue,
+                    code: String(emojiId),
+                    is_add: body.set !== false,
+                  })
+                : reactApi("set_msg_emoji_like", {
+                    message_id: messageIdValue,
+                    emoji_id: String(emojiId),
+                    set: body.set !== false,
+                  }),
           8000,
         )
       } catch (error) {
