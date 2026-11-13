@@ -1532,23 +1532,117 @@ function cachedChatMessages(kind, botId, id, count) {
   return (recentChats.get(recentChatKey(kind, botId, id)) || []).slice(-count)
 }
 
-function chatRecentPassiveId(kind, botId, id) {
-  const now = Date.now()
-  const list = cachedChatMessages(kind, botId, id, RECENT_CHAT_LIMIT)
-  for (let i = list.length - 1; i >= 0; i--) {
-    const item = list[i]
-    if (!item?.id || item.self || item.recalled || item.poke) continue
-    const at = Number(item.at ?? item.time ?? 0)
-    if (!at || now - at > CHAT_PASSIVE_WINDOW_MS) continue
-    return String(item.id)
-  }
-  return ""
+function chatQqbotPassive(kind, targetId) {
+  if (kind !== "group" && kind !== "friend") return false
+  return !String(targetId || "").startsWith("qg_")
 }
 
-function chatQqbotPassiveId(target) {
-  const at = Number(target?.time) * 1000
-  if (!target?.message_id || !at) return ""
-  return Date.now() - at <= CHAT_PASSIVE_WINDOW_MS ? String(target.message_id) : ""
+function chatPassiveLimitText(kind) {
+  return kind === "group"
+    ? "官方机器人只能被动回复，请先在群里 @ 机器人 发一条消息"
+    : "官方机器人只能被动回复，请先给机器人发一条消息"
+}
+
+function chatPassiveReason(reason) {
+  return /4003410|4003412|40034\d|被动回复|msg_?id/i.test(String(reason || ""))
+}
+
+function chatQqbotAnchors(kind, botId, targetId, target, client) {
+  const anchors = []
+  const seen = new Set()
+  const now = Date.now()
+  const add = (id, time) => {
+    const value = String(id ?? "").trim()
+    if (!value || value === "0" || value === "undefined" || /^poke_/.test(value)) return
+    if (seen.has(value)) return
+    const raw = Number(time) || 0
+    const at = raw > 0 ? (raw < 1e12 ? raw * 1000 : raw) : now
+    if (Math.abs(now - at) > CHAT_PASSIVE_WINDOW_MS) return
+    seen.add(value)
+    anchors.push({ id: value, time: Math.floor(at / 1000) })
+  }
+  if (target) add(target.message_id, target.time)
+  const live = kind === "group" ? client?.gl?.get?.(targetId) : client?.fl?.get?.(targetId)
+  if (live) add(live.message_id, live.time)
+  const key = recentChatKey(kind, botId, targetId)
+  const collect = list => {
+    if (!Array.isArray(list)) return
+    for (let index = list.length - 1; index >= 0 && anchors.length < 8; index--) {
+      const item = list[index]
+      if (!item?.id || item.self || item.recalled || item.poke) continue
+      add(item.id, item.at ?? item.time)
+    }
+  }
+  collect(recentChats.get(key))
+  for (const [name, list] of recentChats) {
+    if (name === key || !name.startsWith(`${kind}:`) || !name.endsWith(`:${targetId}`)) continue
+    collect(list)
+  }
+  return anchors
+}
+
+function chatQqbotNativeId(kind, target, targetId, client, botId) {
+  const adapter = client?.adapter
+  const sep = String(adapter?.sep ?? "")
+  const prefix = `${String(client?.uin ?? botId)}${sep}`
+  const raw = String((kind === "group" ? target?.group_id : target?.user_id) ?? "").trim()
+  if (raw) return sep && raw.startsWith(prefix) ? raw.slice(prefix.length) : raw
+  const fallback = String(targetId || "")
+  return sep && fallback.startsWith(prefix) ? fallback.slice(prefix.length) : fallback
+}
+
+async function chatQqbotSend(kind, client, target, targetId, botId, message, replyTo) {
+  const method = kind === "group" ? "sendGroupMsg" : "sendFriendMsg"
+  const adapter = client?.adapter
+  const anchors = chatQqbotAnchors(kind, botId, targetId, target, client)
+  if (replyTo) anchors.unshift({ id: String(replyTo), time: Math.floor(Date.now() / 1000) })
+  if (!anchors.length) throw chatPassiveError(kind, "")
+  const send = data =>
+    typeof adapter?.[method] === "function"
+      ? adapter[method](data, message)
+      : target.sendMsg(message)
+  const nativeId = chatQqbotNativeId(kind, target, targetId, client, botId)
+  let reason = ""
+  let status = 502
+  for (const anchor of anchors.slice(0, replyTo ? 1 : 3)) {
+    const data = {
+      ...(target || {}),
+      bot: client || target?.bot,
+      self_id: String(client?.uin ?? botId),
+      message_id: anchor.id,
+      time: anchor.time,
+      _ret_id: [],
+    }
+    if (kind === "group") data.group_id = nativeId
+    else data.user_id = nativeId
+    let result
+    try {
+      result = await send(data)
+    } catch (error) {
+      reason = String(error?.message || error || "").trim()
+      status = chatPassiveReason(reason) ? 409 : 502
+      if (status !== 409) break
+      continue
+    }
+    if (!chatSendFailed(result)) return result
+    reason = chatSendErrorText(result) || "协议端未返回消息 ID"
+    status = chatPassiveReason(reason) ? 409 : 502
+    if (status !== 409) break
+  }
+  if (status === 409) throw chatPassiveError(kind, reason)
+  const error = new Error(`发送失败：${reason || "协议端未响应"}`)
+  error.reason = reason
+  error.status = status
+  throw error
+}
+
+function chatPassiveError(kind, reason) {
+  const text = chatPassiveLimitText(kind)
+  const detail = String(reason || "").trim().slice(0, 120)
+  const error = new Error(detail ? `${text}（${detail}）` : text)
+  error.reason = detail
+  error.status = 409
+  return error
 }
 
 function chatSendFailed(result) {
@@ -5164,16 +5258,6 @@ function buildApp(opts) {
       const isQQBot = chatClientIsQQBot(client)
       if (wantButton && !isQQBot) return fail(res, 400, "只有官方机器人支持消息按钮")
       if (replyTo) message.push({ type: "reply", id: replyTo })
-      else if (isQQBot && (rich.length || uploads.length || wantButton)) {
-        if (!chatQqbotPassiveId(target) && !chatRecentPassiveId(kind, botId, targetId))
-          return fail(
-            res,
-            409,
-            kind === "group"
-              ? "官方机器人只能被动回复，请先在群里 @ 机器人 发一条消息"
-              : "官方机器人只能被动回复，请先给机器人发一条消息",
-          )
-      }
       for (const segment of rich)
         message.push(
           segment.type === "at"
@@ -5201,32 +5285,29 @@ function buildApp(opts) {
       message[CHAT_WEBUI_SENT] = true
 
       let result
-      try {
-        result = await target.sendMsg(message)
-      } catch (error) {
-        Bot.makeLog("error", ["WebUI 发送消息失败", error], `${botId || "?"} => ${targetId}`)
-        if (String(error?.message ?? error).includes("40034105"))
-          return fail(
-            res,
-            409,
-            kind === "group"
-              ? "官方机器人只能被动回复，请先在群里 @ 机器人 发一条消息"
-              : "官方机器人只能被动回复，请先给机器人发一条消息",
+      if (isQQBot && chatQqbotPassive(kind, targetId)) {
+        try {
+          result = await chatQqbotSend(kind, client, target, targetId, botId, message, replyTo)
+        } catch (error) {
+          Bot.makeLog(
+            "warn",
+            ["WebUI 发送消息失败", error?.reason || error?.message || error],
+            `${botId || "?"} => ${targetId}`,
           )
-        return fail(res, 502, `发送失败：${error?.message || "协议端未响应"}`)
-      }
-      if (chatSendFailed(result)) {
-        const reason = chatSendErrorText(result)
-        Bot.makeLog("error", ["WebUI 发送消息失败", reason || result], `${botId || "?"} => ${targetId}`)
-        if (/40034105|40034128|被动回复/.test(reason))
-          return fail(
-            res,
-            409,
-            kind === "group"
-              ? "官方机器人只能被动回复，请先在群里 @ 机器人 发一条消息"
-              : "官方机器人只能被动回复，请先给机器人发一条消息",
-          )
-        return fail(res, 502, `发送失败：${reason || "协议端未返回消息 ID"}`)
+          return fail(res, Number(error?.status) === 409 ? 409 : 502, error?.message || "发送失败")
+        }
+      } else {
+        try {
+          result = await target.sendMsg(message)
+        } catch (error) {
+          Bot.makeLog("error", ["WebUI 发送消息失败", error], `${botId || "?"} => ${targetId}`)
+          return fail(res, 502, `发送失败：${error?.message || "协议端未响应"}`)
+        }
+        if (chatSendFailed(result)) {
+          const reason = chatSendErrorText(result)
+          Bot.makeLog("error", ["WebUI 发送消息失败", reason || result], `${botId || "?"} => ${targetId}`)
+          return fail(res, 502, `发送失败：${reason || "协议端未返回消息 ID"}`)
+        }
       }
       const messageId = chatSendMessageId(result)
       const quoted = replyTo
@@ -5282,12 +5363,8 @@ function buildApp(opts) {
       if (!target?.sendMsg) return fail(res, 400, "找不到该群聊")
       if (!chatClientIsQQBot(client)) return fail(res, 400, "只有官方机器人支持按钮回调")
 
-      const credential = {
-        message_id: target.message_id ?? client.gl?.get?.(targetId)?.message_id,
-        time: target.time ?? client.gl?.get?.(targetId)?.time,
-      }
-      const issuedAt = Number(credential.time) * 1000
-      if (!credential.message_id || !issuedAt || Date.now() - issuedAt > CHAT_PASSIVE_WINDOW_MS)
+      const credential = chatQqbotAnchors(kind, botId, targetId, target, client)[0]
+      if (!credential)
         return fail(res, 409, "官方机器人只能被动回复，按钮回调已过期，请先在群里 @ 机器人 发一条消息")
       const sep = client.adapter?.sep || ""
       const event = {
@@ -5298,15 +5375,20 @@ function buildApp(opts) {
         message_type: "group",
         sub_type: "callback",
 
-        message_id: String(credential.message_id),
-        time: Number(credential.time),
+        message_id: credential.id,
+        time: credential.time,
         group_id: targetId,
         group_name: target?.group_name || target?.name || "",
         group: target,
         sender: { user_id: `${botId}${sep}webui`, nickname: "网页端" },
         message: [{ type: "text", text }],
         raw_message: text,
-        reply: msg => target.sendMsg(msg),
+        reply: msg =>
+          chatQqbotSend(kind, client, target, targetId, botId, msg).catch(error => ({
+            message_id: [],
+            data: [],
+            error: [error],
+          })),
         get user_id() {
           return this.sender.user_id
         },
