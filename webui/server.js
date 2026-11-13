@@ -1545,6 +1545,26 @@ function chatRecentPassiveId(kind, botId, id) {
   return ""
 }
 
+function chatQqbotPassiveId(target) {
+  const at = Number(target?.time) * 1000
+  if (!target?.message_id || !at) return ""
+  return Date.now() - at <= CHAT_PASSIVE_WINDOW_MS ? String(target.message_id) : ""
+}
+
+function chatSendFailed(result) {
+  if (!result || typeof result !== "object") return false
+  const ids = result.message_id
+  if (Array.isArray(ids) ? ids.length > 0 : Boolean(ids || result.id)) return false
+  if (Array.isArray(result.data) && result.data.length > 0) return false
+  return Array.isArray(result.error) ? result.error.length > 0 : Boolean(result.error)
+}
+
+function chatSendErrorText(result) {
+  const error = result?.error
+  const first = Array.isArray(error) ? error[0] : error
+  return String(first?.message ?? first?.msg ?? first ?? "").trim()
+}
+
 const chatSubscribers = new Set()
 
 function broadcastChatUpdate(kind, botId, id, event, data) {
@@ -5144,9 +5164,15 @@ function buildApp(opts) {
       const isQQBot = chatClientIsQQBot(client)
       if (wantButton && !isQQBot) return fail(res, 400, "只有官方机器人支持消息按钮")
       if (replyTo) message.push({ type: "reply", id: replyTo })
-      else if (isQQBot && kind === "group" && (rich.length || uploads.length || wantButton)) {
-        if (!chatRecentPassiveId(kind, botId, targetId))
-          return fail(res, 409, "官方机器人只能被动回复，请先在群里发一条消息或点击机器人按钮")
+      else if (isQQBot && (rich.length || uploads.length || wantButton)) {
+        if (!chatQqbotPassiveId(target) && !chatRecentPassiveId(kind, botId, targetId))
+          return fail(
+            res,
+            409,
+            kind === "group"
+              ? "官方机器人只能被动回复，请先在群里 @ 机器人 发一条消息"
+              : "官方机器人只能被动回复，请先给机器人发一条消息",
+          )
       }
       for (const segment of rich)
         message.push(
@@ -5180,8 +5206,27 @@ function buildApp(opts) {
       } catch (error) {
         Bot.makeLog("error", ["WebUI 发送消息失败", error], `${botId || "?"} => ${targetId}`)
         if (String(error?.message ?? error).includes("40034105"))
-          return fail(res, 409, "官方机器人只能被动回复，请先在群里发一条消息或点击机器人按钮")
+          return fail(
+            res,
+            409,
+            kind === "group"
+              ? "官方机器人只能被动回复，请先在群里 @ 机器人 发一条消息"
+              : "官方机器人只能被动回复，请先给机器人发一条消息",
+          )
         return fail(res, 502, `发送失败：${error?.message || "协议端未响应"}`)
+      }
+      if (chatSendFailed(result)) {
+        const reason = chatSendErrorText(result)
+        Bot.makeLog("error", ["WebUI 发送消息失败", reason || result], `${botId || "?"} => ${targetId}`)
+        if (/40034105|40034128|被动回复/.test(reason))
+          return fail(
+            res,
+            409,
+            kind === "group"
+              ? "官方机器人只能被动回复，请先在群里 @ 机器人 发一条消息"
+              : "官方机器人只能被动回复，请先给机器人发一条消息",
+          )
+        return fail(res, 502, `发送失败：${reason || "协议端未返回消息 ID"}`)
       }
       const messageId = chatSendMessageId(result)
       const quoted = replyTo
@@ -5237,10 +5282,13 @@ function buildApp(opts) {
       if (!target?.sendMsg) return fail(res, 400, "找不到该群聊")
       if (!chatClientIsQQBot(client)) return fail(res, 400, "只有官方机器人支持按钮回调")
 
-      const credential = client.gl?.get?.(targetId)
-      const issuedAt = Number(credential?.time) * 1000
-      if (!credential?.message_id || !issuedAt || Date.now() - issuedAt > CHAT_PASSIVE_WINDOW_MS)
-        return fail(res, 409, "官方机器人只能被动回复，按钮回调已过期，请先在群里发一条消息")
+      const credential = {
+        message_id: target.message_id ?? client.gl?.get?.(targetId)?.message_id,
+        time: target.time ?? client.gl?.get?.(targetId)?.time,
+      }
+      const issuedAt = Number(credential.time) * 1000
+      if (!credential.message_id || !issuedAt || Date.now() - issuedAt > CHAT_PASSIVE_WINDOW_MS)
+        return fail(res, 409, "官方机器人只能被动回复，按钮回调已过期，请先在群里 @ 机器人 发一条消息")
       const sep = client.adapter?.sep || ""
       const event = {
         raw: { webui: true },
@@ -5250,12 +5298,15 @@ function buildApp(opts) {
         message_type: "group",
         sub_type: "callback",
 
-        message_id: `webui_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        message_id: String(credential.message_id),
         time: Number(credential.time),
         group_id: targetId,
+        group_name: target?.group_name || target?.name || "",
+        group: target,
         sender: { user_id: `${botId}${sep}webui`, nickname: "网页端" },
         message: [{ type: "text", text }],
         raw_message: text,
+        reply: msg => target.sendMsg(msg),
         get user_id() {
           return this.sender.user_id
         },
