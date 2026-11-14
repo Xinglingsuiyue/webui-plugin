@@ -7199,6 +7199,7 @@
     const stampCount = $("[data-chat-stamp-count]", modal.root)
     const stampRefresh = $("[data-chat-stamp-refresh]", modal.root)
     let stampItems = []
+    let stampMode = "sticker"
     let stampLoaded = false
     let stampLoading = false
     let stampError = ""
@@ -7206,7 +7207,9 @@
 
     const renderStamps = () => {
       stampGrid.innerHTML = ""
-      stampCount.textContent = stampItems.length ? `${stampItems.length} 个` : ""
+      stampCount.textContent = stampItems.length
+        ? `${stampItems.length} 个${stampMode === "image" ? " · 按图片发送" : ""}`
+        : ""
       stampRefresh.classList.toggle("busy", stampLoading)
       const showNote = text => {
         stampNote.textContent = text
@@ -7257,6 +7260,7 @@
         stampItems = (Array.isArray(data.items) ? data.items : []).filter(
           item => item?.id && item?.url,
         )
+        stampMode = data.mode === "image" ? "image" : "sticker"
         stampLoaded = true
       } catch (error) {
         if (closed) return
