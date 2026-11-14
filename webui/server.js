@@ -72,6 +72,45 @@ const PUBLIC_DIR = path.join(BASE_DIR, "public")
 const LOG_DIR = path.join(process.cwd(), "logs")
 const LOCAL_IPS = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"])
 
+const LOG_BUFFER_LINES = 2000
+const LOG_BUFFER_LINE_CHARS = 2000
+const logBuffer = []
+let logBufferRest = ""
+const LOG_CAPTURE_FLAG = Symbol.for("webui.logCapture")
+
+function appendLogChunk(chunk) {
+  const text = logBufferRest + chunk
+  const lines = text.split("\n")
+  logBufferRest = lines.pop() ?? ""
+  if (logBufferRest.length > LOG_BUFFER_LINE_CHARS * 4) logBufferRest = logBufferRest.slice(-LOG_BUFFER_LINE_CHARS)
+  for (const raw of lines) {
+    const line = raw.replace(/\r/g, "").trimEnd()
+    if (!line) continue
+    logBuffer.push(line.length > LOG_BUFFER_LINE_CHARS ? `${line.slice(0, LOG_BUFFER_LINE_CHARS)}…` : line)
+  }
+  if (logBuffer.length > LOG_BUFFER_LINES) logBuffer.splice(0, logBuffer.length - LOG_BUFFER_LINES)
+}
+
+function installLogCapture() {
+  if (process[LOG_CAPTURE_FLAG]) return
+  process[LOG_CAPTURE_FLAG] = true
+  const original = process.stdout.write.bind(process.stdout)
+  process.stdout.write = (chunk, encoding, callback) => {
+    try {
+      const text =
+        typeof chunk === "string"
+          ? chunk
+          : chunk instanceof Uint8Array
+            ? Buffer.from(chunk).toString("utf8")
+            : String(chunk ?? "")
+      appendLogChunk(text)
+    } catch {}
+    return original(chunk, encoding, callback)
+  }
+}
+
+installLogCapture()
+
 const AUTH_WINDOW = 10 * 60 * 1000
 const AUTH_MAX_FAILURES = 12
 const AUTH_BLOCK_TIME = 5 * 60 * 1000
@@ -364,6 +403,10 @@ function dateStamp(date = new Date()) {
 }
 
 async function readLogTail(type, lines) {
+  if (type !== "error") {
+    const recent = readConsoleTail(lines)
+    if (recent.length) return recent
+  }
   const file =
     type === "error" ? path.join(LOG_DIR, "error.log") : path.join(LOG_DIR, `command.${dateStamp()}.log`)
   try {
@@ -385,6 +428,12 @@ async function readLogTail(type, lines) {
   } catch {
     return []
   }
+}
+
+function readConsoleTail(lines) {
+  if (!logBuffer.length) return []
+  const text = stripAnsi(logBuffer.join("\n")).replace(/\r/g, "")
+  return cleanHttpRequestBlocks(text.split("\n")).filter(line => line.trim()).slice(-lines)
 }
 
 function cleanHttpRequestBlocks(lines) {
