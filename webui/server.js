@@ -2735,7 +2735,8 @@ function buildApp(opts) {
         if (
           paths.has("disabledTools") ||
           paths.has("disabledToolPlugins") ||
-          paths.has("enableLaunchProgram")
+          paths.has("enableLaunchProgram") ||
+          paths.has("enableHostAccess")
         ) {
           AIToolRegistry.builtinDisabledTools = [
             ...(aiAdmin.toolConfig?.disabledTools || []),

@@ -12,6 +12,7 @@ import { registerUtilityTools } from "./builtin/utility.js"
 import { registerChatTools } from "./builtin/chat.js"
 import { registerActionTools } from "./builtin/actions.js"
 import { registerLaunchTools } from "./builtin/launch.js"
+import { registerHostTools } from "./builtin/host.js"
 import { normalizeGroupId } from "../compat/config.js"
 import { compressMemories } from "./AIMemorySummarizer.js"
 import {
@@ -238,6 +239,7 @@ export default class AIManager {
     registerChatTools()
     registerActionTools()
     registerLaunchTools()
+    registerHostTools()
 
     AIToolRegistry.builtinCaller = (name, args, e) => mcpManager.callBuiltinTool(name, args, e)
     mcpManager.refreshBuiltin()
@@ -569,6 +571,7 @@ export default class AIManager {
     registerChatTools()
     registerActionTools()
     registerLaunchTools()
+    registerHostTools()
     mcpManager.refreshBuiltin()
     return AIToolRegistry.tools.size
   }
@@ -3731,6 +3734,9 @@ export default class AIManager {
       add("launch_program")
       add("find_program")
     }
+    if (AIManager._hostIntent(userMessage)) {
+      for (const name of ["read_file", "list_dir", "run_command"]) add(name)
+    }
     return names
   }
 
@@ -3739,6 +3745,13 @@ export default class AIManager {
     const value = String(text || "")
     if (/启动|运行|打开|开一下/.test(value)) return true
     return /程序|软件|应用|exe/i.test(value) && /找|查|搜索|有什么|装了哪些/.test(value)
+  }
+
+  static _hostIntent(text) {
+    if (cfg.ai?.enableHostAccess !== true) return false
+    const value = String(text || "")
+    if (/文件|目录|文件夹|路径|日志|源码/.test(value)) return true
+    return /命令|终端|shell|powershell|cmd|脚本|执行|运行|跑一下/i.test(value)
   }
 
   static _selfIntent(text) {
