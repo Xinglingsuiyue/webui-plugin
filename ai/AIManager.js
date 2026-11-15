@@ -29,7 +29,9 @@ import fs from "node:fs"
 import path from "node:path"
 import { WEBUI_DATA_DIR } from "../webui/dataDir.js"
 
+
 const MEMORY_COUNTER_FILE = path.join(WEBUI_DATA_DIR, "ai_memory_counters.json")
+const MODEL_ROLE_LABELS = { chat: "对话", vision: "视觉", dispatch: "调度", summary: "总结", profile: "画像", image: "绘图" }
 
 function defaultModelFor(channel, aiCfg = {}) {
   if (channel?.adapterType === "gemini") return "gemini-2.0-flash"
@@ -48,7 +50,6 @@ export default class AIManager {
 
   static proactive = new AIProactiveChat({
     getConfig: () => aiAdmin.proactiveConfig,
-
     getGroups: () => {
       const map = new Map()
       const touch = id => {
@@ -70,14 +71,12 @@ export default class AIManager {
     getGroupConfig: id => aiAdmin.getGroup(id),
     getPreset: (id, botId) => {
       const group = aiAdmin.getGroup?.(id)
-
       const byBot = botId ? group?.botPresets?.[botId] : ""
       const presetId = byBot || group?.presetId
       return presetId ? aiAdmin.get("presets", presetId) : aiAdmin.getActivePreset()
     },
     isAiEnabled: () => cfg.ai?.enabled === true,
     getSelfId: () => String(globalThis.Bot?.uin?.[0] || ""),
-
     getPromises: (groupId, botId) => {
       const group = aiAdmin.getGroup?.(groupId)
       const presetId = (botId ? group?.botPresets?.[botId] : "") || group?.presetId || ""
@@ -86,7 +85,6 @@ export default class AIManager {
         .filter(entry => !presetId || !entry.presetId || entry.presetId === presetId)
         .map(entry => ({ id: entry.id, text: entry.promise.text, due: entry.promise.due, madeAt: entry.promise.madeAt }))
     },
-
     settlePromise: (entryId, evidence) => AIManager.memoryStore.settlePromise(entryId, { status: "done", evidence }),
     getHistory: async groupId => {
       const bot = globalThis.Bot
@@ -94,7 +92,6 @@ export default class AIManager {
       if (typeof group?.getChatHistory !== "function") return []
       const history = await AIManager._withTimeout(group.getChatHistory(0, 10), 8000)
       const list = Array.isArray(history) ? history : history?.messages || []
-
       return list
         .map(item => {
           const sender = item?.sender || {}
@@ -116,7 +113,6 @@ export default class AIManager {
         {
           e: { isGroup: true, group_id: groupId, self_id: selfId || undefined },
           record: true,
-
           ephemeralUserMessage: true,
         },
       )
@@ -125,7 +121,6 @@ export default class AIManager {
     send: async (groupId, content, botId) => {
       const bot = globalThis.Bot
       if (!bot?.pickGroup) return false
-
       const group = botId
         ? bot.bots?.[botId]?.pickGroup?.(Number(groupId) ?? groupId)
         : bot.globals?.group?.[groupId] || bot.pickGroup?.(Number(groupId))
@@ -133,8 +128,9 @@ export default class AIManager {
       await group.sendMsg(String(content))
       return true
     },
-    log: message => Bot.makeLog("info", message, "AIProactive"),
+    log: message => Bot.makeLog("info", message, "WEBUIZAI"),
   })
+
 
   static proactiveSchedulerNeeded() {
     if (aiAdmin.proactiveConfig?.enabled === true) return true
@@ -179,13 +175,9 @@ export default class AIManager {
   static _aiTurns = new Map()
 
   static _memoryCounters = new Map()
-
   static _memoryCounterTimer = null
-
   static _memoryCountersLoaded = false
-
   static _kbInstance = null
-
   static _kbGeneration = -1
 
   static _builtinToolsRegistered = false
@@ -219,7 +211,6 @@ export default class AIManager {
     AIManager.recordStore.load()
     AIManager.memoryStore.load()
     AIManager.sessionStore.load().restoreInto(AIManager.sessions)
-
     AIToolRegistry.builtinDisabledTools = [
       ...(aiAdmin.toolConfig?.disabledTools || []),
       ...(cfg.ai?.disabledTools || []),
@@ -228,10 +219,10 @@ export default class AIManager {
     registerKnowledgeTools()
     registerUtilityTools({
       getVoiceConfig: () => aiAdmin.voiceConfig,
-      getClient: () => AIManager.defaultClient,
+      getClient: () => AIManager._visionClient(),
     })
     registerStickerTools({
-      getClient: () => AIManager.defaultClient,
+      getClient: () => AIManager._visionClient(),
       enabled: () => aiAdmin.stickerConfig?.enabled !== false,
       getConfig: () => aiAdmin.stickerConfig,
       getPreset: e => AIManager._resolvePreset(e),
@@ -246,24 +237,24 @@ export default class AIManager {
     AIManager.defaultClient = AIManager._buildClient()
 
     if (cfg.ai?.enabled !== true) {
-      Bot.makeLog("info", "AI 模块未启用，跳过初始化（plugins/webui-plugin/config/config/ai.yaml）", "AIManager")
+      Bot.makeLog("info", "AI 模块未启用，跳过初始化（plugins/webui-plugin/config/config/ai.yaml）", "WEBUIAI")
       return false
     }
 
     if (!AIManager.defaultClient) {
-      Bot.makeLog("warn", "AI 模块未配置可用的 API Key 或渠道，跳过初始化", "AIManager")
+      Bot.makeLog("warn", "AI 模块未配置可用的 API Key 或渠道，跳过初始化", "WEBUIAI")
       return false
     }
 
-    Bot.makeLog("info", "-----------", "AIManager")
-    Bot.makeLog("info", "初始化 AI 模块...", "AIManager")
+    Bot.makeLog("info", "-----------", "WEBUIAI")
+    Bot.makeLog("info", "初始化 AI 模块...", "WEBUIAI")
 
     const client = AIManager.defaultClient
-    Bot.makeLog("info", `AI 模型: ${logger.cyan(client.model)}`, "AIManager")
-    Bot.makeLog("info", `API 地址: ${logger.cyan(client.baseURL)}`, "AIManager")
-    if (client.channelName) Bot.makeLog("info", `当前渠道: ${logger.cyan(client.channelName)}`, "AIManager")
-    if (client.proxyUrl) Bot.makeLog("info", "网络代理: 已启用", "AIManager")
-    Bot.makeLog("info", `上下文压缩: ${cfg.ai?.enableCompression !== false ? logger.green("启用") : logger.gray("禁用")}`, "AIManager")
+    Bot.makeLog("info", `AI 模型: ${logger.cyan(client.model)}`, "WEBUIAI")
+    Bot.makeLog("info", `API 地址: ${logger.cyan(client.baseURL)}`, "WEBUIAI")
+    if (client.channelName) Bot.makeLog("info", `当前渠道: ${logger.cyan(client.channelName)}`, "WEBUIAI")
+    if (client.proxyUrl) Bot.makeLog("info", "网络代理: 已启用", "WEBUIAI")
+    Bot.makeLog("info", `上下文压缩: ${cfg.ai?.enableCompression !== false ? logger.green("启用") : logger.gray("禁用")}`, "WEBUIAI")
     const trigger = AIManager.getGroupTrigger()
     const triggerText = [
       trigger.at ? "@" : "",
@@ -271,15 +262,14 @@ export default class AIManager {
       trigger.keyword ? `关键词${trigger.keywords.length ? `(${trigger.keywords.slice(0, 3).join("/")})` : ""}` : "",
       trigger.free ? "自由判断" : "",
     ].filter(Boolean)
-    Bot.makeLog("info", `群聊触发: ${logger.cyan(triggerText.length ? triggerText.join(" + ") : "不主动回复")}`, "AIManager")
-    Bot.makeLog("info", `已恢复会话: ${AIManager.sessions.size} 个`, "AIManager")
-    Bot.makeLog("info", "AI 模块初始化完成", "AIManager")
+    Bot.makeLog("info", `群聊触发: ${logger.cyan(triggerText.length ? triggerText.join(" + ") : "不主动回复")}`, "WEBUIAI")
+    Bot.makeLog("info", `已恢复会话: ${AIManager.sessions.size} 个`, "WEBUIAI")
+    Bot.makeLog("info", "AI 模块初始化完成", "WEBUIAI")
 
     if (!AIManager._cleanupTimer) {
       AIManager._cleanupTimer = setInterval(
         () => {
           AIManager.cleanInactiveSessions()
-
           try {
             const archived = AIManager.memoryStore.archiveStale({
               days: cfg.ai?.memoryArchiveDays ?? 180,
@@ -289,7 +279,6 @@ export default class AIManager {
           } catch (err) {
             Bot.makeLog("warn", ["记忆归档失败", err.message], "AIMemory")
           }
-
           try {
             const approved = stickerStore.autoApproveExpired()
             if (approved) Bot.makeLog("info", `表情审核超时自动通过 ${approved} 张`, "AISticker")
@@ -303,13 +292,14 @@ export default class AIManager {
     }
 
     void mcpManager.sync().catch(err =>
-      Bot.makeLog("warn", ["MCP 初始化失败", err.message], "AIManager"),
+      Bot.makeLog("warn", ["MCP 初始化失败", err.message], "WEBUIAI"),
     )
+
 
     const proactiveCfg = aiAdmin.proactiveConfig
     if (AIManager.syncProactiveScheduler()) {
       const scope = proactiveCfg?.enabled === true ? "全局" : "仅单独开启的群"
-      Bot.makeLog("info", `主动聊天已启动（${scope}），每 ${proactiveCfg.pollIntervalSeconds} 秒检查一次`, "AIManager")
+      Bot.makeLog("info", `主动聊天已启动（${scope}），每 ${proactiveCfg.pollIntervalSeconds} 秒检查一次`, "WEBUIAI")
     }
 
     return true
@@ -465,7 +455,6 @@ export default class AIManager {
       if (!parsed.model) continue
       const target = parsed.channelId ? aiAdmin.get("channels", parsed.channelId) : channel
       if (!target || target.enabled === false) continue
-
       if (!parsed.channelId && activeModels.size && !activeModels.has(parsed.model)) continue
       if (target.id === channel?.id && parsed.model === primaryModel) continue
       const key = `${target.id}::${parsed.model}`
@@ -501,7 +490,6 @@ export default class AIManager {
       )
     }
     if (status >= 400) return false
-
     if (error.upstream) return true
     return /ECONN|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|network|timeout|超时|aborted|fetch failed|stream|rate limit|too many|quota/i.test(
       String(error.message || ""),
@@ -537,7 +525,7 @@ export default class AIManager {
       Bot.makeLog(
         "warn",
         [`预设模型 "${wanted}" 不在渠道「${channel?.name || channel?.id}」的模型列表中`, `改用 "${fallback}"`],
-        "AIManager",
+        "WEBUIAI",
       )
     return fallback
   }
@@ -547,7 +535,6 @@ export default class AIManager {
     if (!level || level === "auto") return undefined
     const name = String(model || "").toLowerCase()
     if (!/(^|[/_:-])(o1|o3|o4|gpt-5|deepseek-r1|qwq|reasoner)/.test(name)) return undefined
-
     return level === "xhigh" ? "high" : level
   }
 
@@ -560,10 +547,10 @@ export default class AIManager {
     }
     registerUtilityTools({
       getVoiceConfig: () => aiAdmin.voiceConfig,
-      getClient: () => AIManager.defaultClient,
+      getClient: () => AIManager._visionClient(),
     })
     registerStickerTools({
-      getClient: () => AIManager.defaultClient,
+      getClient: () => AIManager._visionClient(),
       enabled: () => aiAdmin.stickerConfig?.enabled !== false,
       getConfig: () => aiAdmin.stickerConfig,
       getPreset: e => AIManager._resolvePreset(e),
@@ -586,7 +573,7 @@ export default class AIManager {
     AIManager.reloadClient()
     if (cfg.ai?.enabled === true && AIManager.defaultClient) {
       void mcpManager.sync().catch(err =>
-        Bot.makeLog("warn", ["MCP 重连失败", err.message], "AIManager"),
+        Bot.makeLog("warn", ["MCP 重连失败", err.message], "WEBUIAI"),
       )
     }
     AIManager.syncProactiveScheduler()
@@ -597,7 +584,6 @@ export default class AIManager {
     const client = AIManager.defaultClient
     const preset = aiAdmin.getActivePreset()
     const activeChannel = aiAdmin.getActiveChannel()
-
     const channel =
       activeChannel ||
       (client?.channelId ? { id: client.channelId, name: client.channelName } : null)
@@ -624,7 +610,6 @@ export default class AIManager {
   static _resolvePresetInfo(e) {
     if (e?.isGroup) {
       const group = aiAdmin.getGroup(e.group_id)
-
       const botPresetId = group?.botPresets?.[String(e.self_id || "")]
       if (botPresetId) {
         const preset = aiAdmin.get("presets", botPresetId)
@@ -720,14 +705,12 @@ export default class AIManager {
     const total = Number(usage?.total_tokens) || 0
     if (total <= 0) return
     session.tokenSpent = (session.tokenSpent || 0) + total
-
     if (Number(session.turnLimit) > 0 && (Number(session.turnUsed) || 0) > Number(session.turnLimit))
       session.extraTokenSpent = (Number(session.extraTokenSpent) || 0) + total
   }
 
   static _selectSkills(userMessage) {
     const text = String(userMessage || "").toLowerCase()
-
     return aiAdmin
       .list("skills")
       .filter(skill => skill.enabled)
@@ -775,7 +758,6 @@ export default class AIManager {
       high: "回答前充分分析、核对事实与约束，必要时列出关键依据；只输出最终结论，不展示内部推理。",
       xhigh: "逐层拆解问题，交叉验证每个结论与边界情况，再给出经过推敲的最终答案；只输出结论，不展示内部推理。",
     }
-
     const rawPrompt = String(preset?.systemPrompt || "")
     const referenced = key => rawPrompt.includes(`{${key}}`)
     const persona = [
@@ -810,7 +792,6 @@ export default class AIManager {
           {
             groupId: e?.group_id,
             userId: e?.user_id,
-
             query: opts.userMessage || "",
             mood: preset?.mood || "",
           },
@@ -834,7 +815,6 @@ export default class AIManager {
         senderInfo.push(
           `发送者: ${e.sender?.card || e.sender?.nickname || e.user_id}(${e.user_id})`,
         )
-
         senderInfo.push(AIManager._currentTimeLine())
         prompt += "\n\n## 当前会话上下文\n" + senderInfo.join("\n")
       }
@@ -981,7 +961,6 @@ export default class AIManager {
           .join("、")
         const canUpload = stickerStore.canUpload(preset, stickerCfg)
         const tagText = presetTags.length ? presetTags.join("、") : ""
-
         const visible = stickerStore.list({
           presetId: preset?.id || "",
           ownOnly,
@@ -1099,7 +1078,6 @@ export default class AIManager {
     const removed = AIManager.sessions.delete(conversationId)
     if (persist) AIManager.sessionStore.remove(conversationId)
     AIManager._memoryCounters.delete(conversationId)
-
     AIManager._memoryCounters.delete(`kb:${conversationId}`)
     AIManager._sessionQueues.delete(conversationId)
     return removed
@@ -1124,11 +1102,13 @@ export default class AIManager {
     const session = AIManager.getSession(conversationId, { ...opts, preset, systemPrompt: opts.systemPrompt })
     AIManager._applyPreset(session, preset)
 
+
     session.addUserMessage(userMessage, opts.ephemeralUserMessage ? { internal: true } : {})
 
     const submitted = session.messages[session.messages.length - 1]
 
-    const client = opts.client || AIManager.defaultClient
+    const roleTarget = opts.client ? null : AIManager._roleTarget("chat")
+    const client = opts.client || roleTarget?.client || AIManager.defaultClient
     if (!client) throw new Error("AI 客户端未初始化")
 
     if (AIManager._budgetExceeded(session)) {
@@ -1141,16 +1121,17 @@ export default class AIManager {
 
     const messages = session.getMessages()
     const startedAt = Date.now()
+    const requestOptions = { ...AIManager._requestOptions(preset), ...opts }
+    if (roleTarget?.model) requestOptions.model = roleTarget.model
 
     try {
-      const result = await client.chat(messages, { ...AIManager._requestOptions(preset), ...opts })
+      const result = await client.chat(messages, requestOptions)
       AIManager._addTurnToSession(session)
       AIManager._addUsageToSession(session, result.usage)
 
       if (opts.ephemeralUserMessage)
         Object.assign(submitted, { content: "[主动开口]", internal: true })
       session.addAssistantMessage(result.content)
-
       if (opts.ephemeralUserMessage && AIProactiveChat.isDecline(result.content)) {
         const at = session.messages.indexOf(submitted)
         if (at >= 0) session.messages.splice(at, 1)
@@ -1162,6 +1143,7 @@ export default class AIManager {
           e: opts.e,
           client,
           preset,
+          model: roleTarget?.model,
           usage: result.usage,
           latencyMs: Date.now() - startedAt,
           toolCalls: result.toolCalls?.length || 0,
@@ -1176,11 +1158,12 @@ export default class AIManager {
           e: opts.e,
           client,
           preset,
+          model: roleTarget?.model,
           latencyMs: Date.now() - startedAt,
           success: false,
           error: err.message,
         })
-      Bot.makeLog("error", ["AI 对话错误", err.message], "AIManager")
+      Bot.makeLog("error", ["AI 对话错误", err.message], "WEBUIAI")
       session.messages.pop()
       throw err
     } finally {
@@ -1200,7 +1183,8 @@ export default class AIManager {
     AIManager._applyPreset(session, preset)
     session.addUserMessage(userMessage)
 
-    const client = opts.client || AIManager.defaultClient
+    const roleTarget = opts.client ? null : AIManager._roleTarget("chat")
+    const client = opts.client || roleTarget?.client || AIManager.defaultClient
     if (!client) throw new Error("AI 客户端未初始化")
 
     if (AIManager._budgetExceeded(session)) {
@@ -1213,9 +1197,11 @@ export default class AIManager {
 
     const messages = session.getMessages()
     const startedAt = Date.now()
+    const requestOptions = { ...AIManager._requestOptions(preset), ...opts }
+    if (roleTarget?.model) requestOptions.model = roleTarget.model
 
     try {
-      const result = await client.chatStream(messages, { ...AIManager._requestOptions(preset), ...opts })
+      const result = await client.chatStream(messages, requestOptions)
       AIManager._addTurnToSession(session)
       AIManager._addUsageToSession(session, result.usage)
       session.addAssistantMessage(result.content)
@@ -1225,6 +1211,7 @@ export default class AIManager {
           e: opts.e,
           client,
           preset,
+          model: roleTarget?.model,
           usage: result.usage,
           latencyMs: Date.now() - startedAt,
           success: true,
@@ -1238,11 +1225,12 @@ export default class AIManager {
           e: opts.e,
           client,
           preset,
+          model: roleTarget?.model,
           latencyMs: Date.now() - startedAt,
           success: false,
           error: err.message,
         })
-      Bot.makeLog("error", ["AI 流式对话错误", err.message], "AIManager")
+      Bot.makeLog("error", ["AI 流式对话错误", err.message], "WEBUIAI")
       session.messages.pop()
       throw err
     } finally {
@@ -1285,7 +1273,6 @@ export default class AIManager {
     const client = AIManager.defaultClient
     if (!client?.stream) return null
     if (client.adapterType !== "openai" || client.apiFormat === "responses") return null
-
     const softLimit = Math.max(60, Number(cfg.ai?.streamSplitChars) || 220)
     const hardLimit = Math.max(softLimit, Number(cfg.ai?.streamMaxChunkLength) || 480)
 
@@ -1311,7 +1298,7 @@ export default class AIManager {
         .catch(err => {
           failed += 1
           lastError = err
-          Bot.makeLog("warn", ["流式分段发送失败", err.message], "AIManager")
+          Bot.makeLog("warn", ["流式分段发送失败", err.message], "WEBUIAI")
         })
     }
 
@@ -1339,7 +1326,6 @@ export default class AIManager {
       const text = buffer.trim()
       buffer = ""
       if (!text) return
-
       const pieces = splitBySentence(text, softLimit)
       for (const piece of pieces) send(piece)
     }
@@ -1350,7 +1336,6 @@ export default class AIManager {
       },
       push(chunk) {
         buffer += String(chunk || "")
-
         if (buffer.length >= hardLimit) flushAll()
       },
       async flush() {
@@ -1363,7 +1348,6 @@ export default class AIManager {
 
   static _conversationIdOf(e) {
     if (e?.__backendSessionId) return `backend:${e.__backendSessionId}`
-
     const bot = e?.self_id ? `:bot:${e.self_id}` : ""
     return e?.isGroup
       ? `group:${normalizeGroupId(e.group_id)}${bot}`
@@ -1373,7 +1357,6 @@ export default class AIManager {
   static _groupIdOfConversation(conversationId) {
     const raw = String(conversationId || "")
     if (!raw.startsWith("group:")) return ""
-
     return raw.slice(6).replace(/:bot:[^:]+$/, "")
   }
 
@@ -1391,23 +1374,18 @@ export default class AIManager {
     if (e.post_type && e.post_type !== "message") return false
     if (!(e.isGroup || e.isPrivate)) return false
     if (e.msg && String(e.msg).trim()) return true
-
     if (e.atBot) return true
-
     if (collectEventImages(e).length) return true
-
     if (!Array.isArray(e.message)) return false
     return AIManager._forwardIdsOf(e.message).length > 0 || e.message.some(seg => seg?.type === "forward")
   }
 
   static _isPokeEvent(e) {
     if (!e || e.post_type !== "notice") return false
-
     if (cfg.ai?.pokeReply === false) return false
     if (e.sub_type !== "poke" && e.notice_type !== "poke") return false
     const self = String(e.self_id || "")
     const target = String(e.target_id || "")
-
     if (!target) return true
     return !self || target === self
   }
@@ -1415,7 +1393,6 @@ export default class AIManager {
   static _pokeMessageOf(e) {
     const uid = String(e?.operator_id || e?.user_id || "")
     const who = e?.sender?.card || e?.sender?.nickname || uid || "有人"
-
     return uid ? `[${who}(${uid}) 戳了戳你]` : `[${who} 戳了戳你]`
   }
 
@@ -1444,14 +1421,11 @@ export default class AIManager {
   static _isBotSender(e) {
     const uid = String(e?.user_id || "")
     if (!uid) return false
-
     if (e?.__backendSessionId || uid === "stdin") return false
     if (uid === String(e?.self_id || "")) return true
-
     try {
       for (const id of globalThis.Bot?.uin || []) if (String(id) === uid) return true
     } catch {}
-
     if (e?.sender?.is_bot === true) return true
     if (e?.isBot === true) return true
     if (e?.raw?.author?.bot === true || e?.raw?.author?.bot === "true") return true
@@ -1496,9 +1470,7 @@ export default class AIManager {
       )
     const whitelist = toSet(cfg.ai?.privateWhitelist)
     const blacklist = toSet(cfg.ai?.privateBlacklist)
-
     if (blacklist.has(uid)) return false
-
     if (whitelist.size > 0) return whitelist.has(uid)
     return true
   }
@@ -1509,14 +1481,12 @@ export default class AIManager {
     const prefixes = (preset?.prefixes || []).filter(Boolean)
     if (!prefixes.length) return false
     const text = String(e.msg)
-
     const matched = [...prefixes].sort((a, b) => b.length - a.length).find(prefix => {
       const trimmed = text.trimStart()
       return trimmed.toLowerCase().startsWith(String(prefix).toLowerCase())
     })
     if (!matched) return false
     const trimmed = text.trimStart()
-
     const rest = trimmed.slice(matched.length).trimStart()
     if (rest) e.msg = rest
     e.presetPrefix = matched
@@ -1538,7 +1508,6 @@ export default class AIManager {
         keywords: [...new Set([...(group.keywords || []), ...scoped])],
       }
     }
-
     const legacy = String(cfg.ai?.groupTrigger || "").trim()
     const legacyAt = legacy === "at" || legacy === "atOrPrefix" || legacy.toLowerCase() === "atorprefix"
     const legacyPrefix = legacy === "prefix" || legacy === "atOrPrefix" || legacy.toLowerCase() === "atorprefix"
@@ -1550,7 +1519,6 @@ export default class AIManager {
     return {
       at: bool(cfg.ai?.triggerAt, legacyAt),
       prefix: bool(cfg.ai?.triggerPrefix, legacyPrefix),
-
       keyword: keywords.length ? true : bool(cfg.ai?.triggerKeyword, false),
       free: bool(cfg.ai?.triggerFree, legacyFree),
       keywords,
@@ -1635,7 +1603,6 @@ export default class AIManager {
     const text = String(e.msg || "").trim()
     if (!text && collectEventImages(e).length) return true
     const minRaw = Number(cfg.ai?.freeMinLength)
-
     const minLength = Math.max(0, Number.isFinite(minRaw) ? Math.floor(minRaw) : 2)
     if (text.length < minLength) return false
 
@@ -1651,13 +1618,11 @@ export default class AIManager {
     const now = Date.now()
     const userKey = `${e.self_id}:${e.group_id}:${e.user_id}`
     const cooldownRaw = Number(cfg.ai?.freeUserCooldown)
-
     const cooldown = Math.max(0, Number.isFinite(cooldownRaw) ? cooldownRaw : 60) * 1000
     if (now - (AIManager._freeUserCooldown.get(userKey) || 0) < cooldown) return false
 
     const groupKey = `${e.self_id}:${e.group_id}`
     const maxRaw = Number(cfg.ai?.freeMaxPerMinute)
-
     const max = Math.max(0, Number.isFinite(maxRaw) ? Math.floor(maxRaw) : 6)
     const window = (AIManager._freeGroupWindow.get(groupKey) || []).filter(
       time => now - time < 60000,
@@ -1678,10 +1643,14 @@ export default class AIManager {
   static _warnJudgeOnce(key, message) {
     if (AIManager._judgeWarnings.has(key)) return
     AIManager._judgeWarnings.add(key)
-    Bot.makeLog("warn", message, "AIManager")
+    Bot.makeLog("warn", message, "WEBUIAI")
   }
 
-  static _judgeClient(ref) {
+
+
+
+
+  static _resolveModelRef(ref, label = "指定") {
     const raw = String(ref || "").trim()
     const fallback = { client: AIManager.defaultClient, model: "" }
     if (!raw) return fallback
@@ -1695,8 +1664,8 @@ export default class AIManager {
       channel = channels.find(item => item.id === parsed.channelId) || null
       if (!channel) {
         AIManager._warnJudgeOnce(
-          raw,
-          `自由判定模型「${raw}」指定的渠道不存在或已停用，改用主模型`,
+          `${label}:${raw}`,
+          `${label}模型「${raw}」指定的渠道不存在或已停用，改用主模型`,
         )
         return fallback
       }
@@ -1705,8 +1674,8 @@ export default class AIManager {
       channel = hasModel(active) ? active : channels.find(hasModel) || null
       if (!channel) {
         AIManager._warnJudgeOnce(
-          raw,
-          `自由判定模型「${parsed.model}」不在任何启用渠道的模型列表中，改用主模型`,
+          `${label}:${raw}`,
+          `${label}模型「${parsed.model}」不在任何启用渠道的模型列表中，改用主模型`,
         )
         return fallback
       }
@@ -1716,18 +1685,69 @@ export default class AIManager {
     const client = AIManager._buildClientForChannel(channel, null, aiAdmin.getActiveProxy())
     if (!client) {
       AIManager._warnJudgeOnce(
-        raw,
-        `自由判定渠道「${channel.name || channel.id}」缺少可用密钥，改用主模型`,
+        `${label}:${raw}`,
+        `${label}渠道「${channel.name || channel.id}」缺少可用密钥，改用主模型`,
       )
       return fallback
     }
     Bot.makeLog(
       "debug",
-      [`自由判定使用渠道「${channel.name || channel.id}」的模型 ${parsed.model}`],
-      "AIManager",
+      [`${label}使用渠道「${channel.name || channel.id}」的模型 ${parsed.model}`],
+      "WEBUIAI",
     )
     return { client, model: parsed.model }
   }
+
+
+  static _judgeClient(ref) {
+    return AIManager._resolveModelRef(ref, "自由判定")
+  }
+
+  static _roleRaw(role) {
+    return String(aiAdmin.modelRoles?.[role] || "").trim()
+  }
+
+
+  static _roleTarget(role) {
+    const raw = AIManager._roleRaw(role)
+    if (!raw) return null
+    return AIManager._resolveModelRef(raw, MODEL_ROLE_LABELS[role] || "分类")
+  }
+
+
+  static _roleChatClient(role) {
+    const target = AIManager._roleTarget(role)
+    if (!target?.client) return null
+    if (!target.model || target.model === target.client.model) return target.client
+    return {
+      model: target.model,
+      channelName: target.client.channelName,
+      chat: (messages, options = {}) => target.client.chat(messages, { ...options, model: target.model }),
+      chatStream:
+        typeof target.client.chatStream === "function"
+          ? (messages, options = {}) => target.client.chatStream(messages, { ...options, model: target.model })
+          : undefined,
+    }
+  }
+
+
+  static _visionClient() {
+    return AIManager._roleChatClient("vision") || AIManager.defaultClient
+  }
+
+
+  static _visionDescribeClient() {
+    return AIManager._roleChatClient("vision") || (AIManager._clientSupportsVision() ? AIManager.defaultClient : null)
+  }
+
+
+  static _imageTarget(preset) {
+    const role = AIManager._roleTarget("image")
+    if (!preset?.model && role?.client) return { client: role.client, model: role.model || "" }
+    const client = AIManager._imageClientForPreset(preset)
+    return { client, model: preset?.model || client?.model || "" }
+  }
+
 
   static async _freeJudge(e) {
     if (!AIManager._freePrefilter(e)) return false
@@ -1761,7 +1781,7 @@ export default class AIManager {
       .filter(Boolean)
       .join("\n")
 
-    const judge = AIManager._judgeClient(aiCfg.freeJudgeModel)
+    const judge = AIManager._judgeClient(AIManager._roleRaw("dispatch") || aiCfg.freeJudgeModel)
     if (!judge.client) return false
     try {
       const result = await judge.client.chat([{ role: "user", content: prompt }], {
@@ -1779,7 +1799,7 @@ export default class AIManager {
       }
       return /"reply"\s*:\s*true/.test(content) || content.trim() === "true"
     } catch (err) {
-      Bot.makeLog("debug", ["AI 自由回复判定失败", err.message], "AIManager")
+      Bot.makeLog("debug", ["AI 自由回复判定失败", err.message], "WEBUIAI")
       return false
     }
   }
@@ -1800,7 +1820,6 @@ export default class AIManager {
       text
         .replace(/\[CQ:image[^\]]*\]/g, "")
         .replace(/\[CQ:(?:reply|at|face|mface|dice|rps)[^\]]*\]/g, "")
-
         .replace(/<(?:image|face|at|video|audio|reply|ark|embed|markdown|button|link)\b[^>]*>/gi, "")
         .replace(/\[回复：[^\]]*\]/g, "")
         .trim()
@@ -1817,7 +1836,7 @@ export default class AIManager {
       if (AIManager._incomingBatches.get(key) !== batch) return
       AIManager._incomingBatches.delete(key)
       AIManager._flushIncomingBatch(batch.events).catch(err =>
-        Bot.makeLog("error", ["AI 合并消息处理失败", err.message], "AIManager"),
+        Bot.makeLog("error", ["AI 合并消息处理失败", err.message], "WEBUIAI"),
       )
     }, AIManager._mergeWindowMs)
     if (typeof timer.unref === "function") timer.unref()
@@ -1837,7 +1856,6 @@ export default class AIManager {
               .join("\n"),
           }
         : first
-
     AIManager._beginTurn(conversationId)
     try {
       if (!(await AIManager._shouldReply(judgeEvent))) {
@@ -1894,9 +1912,11 @@ export default class AIManager {
     if (cfg.ai?.enabled !== true || !AIManager.defaultClient) return false
     if (!AIManager._isMessageEvent(e)) return false
 
+
+
     if (AIManager._isBotSender(e)) {
       if (e.isGroup) AIManager.proactive.recordMessage(String(e.group_id), Date.now(), AIManager._groupBotIds(String(e.group_id)))
-      Bot.makeLog("debug", [`跳过机器人消息 uid=${e?.user_id} self=${e?.self_id}`], "AIManager")
+      Bot.makeLog("debug", [`跳过机器人消息 uid=${e?.user_id} self=${e?.self_id}`], "WEBUIAI")
       return false
     }
 
@@ -1904,17 +1924,15 @@ export default class AIManager {
     if (!AIManager._passesChatSwitch(e)) return false
 
     if (e.isGroup) {
+      const vision = AIManager._visionDescribeClient()
       void autoCollectSticker(e, aiAdmin.stickerConfig, {
         preset: AIManager._resolvePreset(e),
 
-        describe: AIManager._clientSupportsVision()
-          ? buffer => describeWithVision(buffer, AIManager.defaultClient)
-          : null,
-      }).catch(err => Bot.makeLog("debug", ["自动收集表情失败", err.message], "AIManager"))
+        describe: vision ? buffer => describeWithVision(buffer, vision) : null,
+      }).catch(err => Bot.makeLog("debug", ["自动收集表情失败", err.message], "WEBUIAI"))
     }
 
     const conversationId = AIManager._conversationIdOf(e)
-
     const batchKey = `${conversationId}:${e.self_id || ""}:${e.user_id || ""}`
 
     if ((AIManager._aiTurns.get(conversationId) || 0) > 0 && AIManager._isImageOnlyMessage(e)) {
@@ -1972,7 +1990,6 @@ export default class AIManager {
         extraImageRefs.push(...(quoted.imageRefs || []))
       }
       if (extraImages.length) e._aiExtraImages = [...new Set(extraImages)]
-
       if (extraImageRefs.length) e._aiExtraImageRefs = extraImageRefs
       const parts = [contextInfo, ...quotedTexts]
       if (rawLines.length) parts.push(`用户消息: ${rawLines.join("\n")}`)
@@ -1989,14 +2006,16 @@ export default class AIManager {
       const fullMessage = parts.filter(Boolean).join("\n")
       const rawMessage = rawLines.join("\n")
 
+
       const streamer = AIManager._createStreamSender(e, aiCfg)
       Bot.makeLog("debug", [
         `流式分段: ${streamer ? "启用" : "关闭"}`,
         `渠道 stream=${AIManager.defaultClient?.stream}`,
         `adapter=${AIManager.defaultClient?.adapterType}/${AIManager.defaultClient?.apiFormat}`,
-      ], "AIManager")
+      ], "WEBUIAI")
       if (streamer) e._aiOnStreamChunk = streamer.push
       const result = await AIManager.chatWithTools(conversationId, fullMessage, e)
+
       const session = AIManager.sessions.get(conversationId)
       const replyMessage = session?.messages.at(-1)?.role === "assistant" ? session.messages.at(-1) : null
       let delivered = 0
@@ -2012,7 +2031,7 @@ export default class AIManager {
         const content = AIManager._sanitizeReply(result.content, AIManager._resolvePreset(e), { taskMode: result.taskMode === true })
 
         if (!content) {
-          Bot.makeLog("debug", ["回复清洗后为空，跳过发送", String(result.content).slice(0, 60)], "AIManager")
+          Bot.makeLog("debug", ["回复清洗后为空，跳过发送", String(result.content).slice(0, 60)], "WEBUIAI")
         } else {
           const chunks = []
           for (let i = 0; i < content.length; i += 1800) chunks.push(content.slice(i, i + 1800))
@@ -2028,11 +2047,12 @@ export default class AIManager {
       }
 
       if (sendError) {
-        Bot.makeLog("warn", ["AI 回复发送失败", sendError.message], "AIManager")
+        Bot.makeLog("warn", ["AI 回复发送失败", sendError.message], "WEBUIAI")
+
         if (!delivered) {
           AIManager._dropUndeliveredReply(session, replyMessage)
           AIManager._persistSession(conversationId, session, e)
-          Bot.makeLog("warn", ["未送达的回复已从会话历史移除", String(result.content).slice(0, 60)], "AIManager")
+          Bot.makeLog("warn", ["未送达的回复已从会话历史移除", String(result.content).slice(0, 60)], "WEBUIAI")
           return false
         }
       }
@@ -2041,14 +2061,14 @@ export default class AIManager {
         `AI 回复 [${conversationId}]`,
         `tokens: ${result.usage?.total_tokens || "?"}`,
         `toolCalls: ${result.toolCallCount || 0}`,
-      ], "AIManager")
+      ], "WEBUIAI")
 
       void AIManager._maybeExtractMemories(e, rawMessage, result.content)
       void AIManager._maybeExtractKnowledge(e, rawMessage, result.content)
       void AIManager._maybeAutoCompressMemories()
       return true
     } catch (err) {
-      Bot.makeLog("error", ["AI 处理消息错误", err.message], "AIManager")
+      Bot.makeLog("error", ["AI 处理消息错误", err.message], "WEBUIAI")
       return false
     } finally {
       AIManager._endTurn(conversationId)
@@ -2058,7 +2078,7 @@ export default class AIManager {
         const drained = await AIManager._drainDeferredReactions(conversationId, session)
         if (drained && session) AIManager._persistSession(conversationId, session, e)
       } catch (err) {
-        Bot.makeLog("warn", ["记录接话表情失败", err.message], "AIManager")
+        Bot.makeLog("warn", ["记录接话表情失败", err.message], "WEBUIAI")
       }
     }
   }
@@ -2088,7 +2108,7 @@ export default class AIManager {
         }
       } catch {}
     }
-    Bot.makeLog("debug", ["已为自述问题注入账号资料", selfId], "AIManager")
+    Bot.makeLog("debug", ["已为自述问题注入账号资料", selfId], "WEBUIAI")
     return {
       avatar,
       line:
@@ -2101,15 +2121,12 @@ export default class AIManager {
 
   static async _collectMessageImages(e, userMessage = "") {
     if (cfg.ai?.visionInput === false) return []
-
     const sources = [...new Set([...collectEventImages(e), ...(Array.isArray(e?._aiExtraImages) ? e._aiExtraImages : [])])]
     if (!sources.length) return []
-
     const limit = Math.max(1, Number(cfg.ai?.maxImagesPerMessage) || 10)
     const budget = Math.max(1, Number(cfg.ai?.maxImageBytesPerMessage) || 12 * 1024 * 1024)
     const images = []
     let usedBytes = 0
-
     const loaded = await Promise.all(
       sources.slice(0, limit).map(async source => {
         try {
@@ -2118,23 +2135,26 @@ export default class AIManager {
           const mime = mimeOfBuffer(buffer)
           return mime ? { mime, buffer } : null
         } catch (err) {
-          Bot.makeLog("debug", ["读取消息图片失败", err.message], "AIManager")
+          Bot.makeLog("debug", ["读取消息图片失败", err.message], "WEBUIAI")
           return null
         }
       }),
     )
     for (const item of loaded) {
       if (!item) continue
+
+
       if (usedBytes + item.buffer.length > budget) continue
       usedBytes += item.buffer.length
       images.push({ mime: item.mime, dataUrl: `data:${item.mime};base64,${item.buffer.toString("base64")}` })
     }
     if (images.length && !AIManager._clientSupportsVision()) {
-      Bot.makeLog("debug", [`图片已读取 ${images.length} 张，但当前渠道未声明支持图片，已降级为文字提示`], "AIManager")
+
+      Bot.makeLog("debug", [`图片已读取 ${images.length} 张，但当前渠道未声明支持图片，已降级为文字提示`], "WEBUIAI")
       return { unsupported: true, count: images.length }
     }
     if (sources.length && !images.length)
-      Bot.makeLog("debug", [`消息含 ${sources.length} 个图片来源，但全部下载/解码失败`], "AIManager")
+      Bot.makeLog("debug", [`消息含 ${sources.length} 个图片来源，但全部下载/解码失败`], "WEBUIAI")
     return images
   }
 
@@ -2180,7 +2200,6 @@ export default class AIManager {
           const file = data.file || seg.file || ""
           if (url || file) {
             out.images.push(url || file)
-
             out.imageRefs.push({ url, file })
           } else texts.push("[图片]")
           break
@@ -2233,7 +2252,7 @@ export default class AIManager {
         const nodes = data?.message ?? data?.messages ?? res?.message ?? res?.messages
         if (nodes) return Array.isArray(nodes) ? nodes : [nodes]
       } catch (err) {
-        Bot.makeLog("debug", ["get_forward_msg 失败", err.message], "AIManager")
+        Bot.makeLog("debug", ["get_forward_msg 失败", err.message], "WEBUIAI")
       }
     }
     const pick = e?.isGroup ? e.group : e.friend
@@ -2274,7 +2293,6 @@ export default class AIManager {
         const quoted = await AIManager._withTimeout(e.getReply())
         const parsed = AIManager._flattenMessageSegments(quoted)
         const sender = quoted?.sender?.card || quoted?.sender?.nickname || quoted?.sender?.user_id || ""
-
         const quotedUserId = String(quoted?.sender?.user_id || quoted?.user_id || "")
         const selfId = String(e?.self_id || "")
         const isSelfQuoted = !!quotedUserId && quotedUserId === selfId
@@ -2291,7 +2309,6 @@ export default class AIManager {
         else if (parsed.images.length) extra.texts.push(`${head}（${parsed.images.length} 张图片，见附图）`)
         extra.images.push(...parsed.images)
         extra.imageRefs.push(...(parsed.imageRefs || []))
-
         for (const id of AIManager._forwardIdsOf(quoted)) {
           try {
             const forward = await AIManager._readForward(e, id)
@@ -2299,12 +2316,12 @@ export default class AIManager {
             extra.images.push(...forward.images)
             extra.imageRefs.push(...(forward.imageRefs || []))
           } catch (err) {
-            Bot.makeLog("error", ["读取引用中的合并转发失败", err.message], "AIManager")
+            Bot.makeLog("error", ["读取引用中的合并转发失败", err.message], "WEBUIAI")
             extra.texts.push("[合并转发记录]（读取失败）")
           }
         }
       } catch (err) {
-        Bot.makeLog("debug", ["读取引用消息失败", err.message], "AIManager")
+        Bot.makeLog("debug", ["读取引用消息失败", err.message], "WEBUIAI")
         extra.texts.push("[引用的消息]（读取失败）")
       }
     }
@@ -2319,7 +2336,7 @@ export default class AIManager {
         extra.images.push(...forward.images)
         extra.imageRefs.push(...(forward.imageRefs || []))
       } catch (err) {
-        Bot.makeLog("error", ["读取合并转发失败", err.message], "AIManager")
+        Bot.makeLog("error", ["读取合并转发失败", err.message], "WEBUIAI")
         extra.texts.push("[合并转发记录]（读取失败）")
       }
     }
@@ -2342,10 +2359,8 @@ export default class AIManager {
     session.setSystemPrompt(
       AIManager._buildSystemPrompt(e, { preset, userMessage, skills }),
     )
-
     session.setRuntimeRules(AIManager._buildRuntimeRules(e, { preset, userMessage, skills, taskMode }))
     const images = await AIManager._collectMessageImages(e, userMessage)
-
     const selfInfo = await AIManager._selfInfoLine(e, userMessage)
     let userPayload
     if (selfInfo.line) {
@@ -2357,7 +2372,7 @@ export default class AIManager {
           if (mime)
             merged.push({ mime, dataUrl: `data:${mime};base64,${buffer.toString("base64")}` })
         } catch (err) {
-          Bot.makeLog("debug", ["读取自身头像失败", err.message], "AIManager")
+          Bot.makeLog("debug", ["读取自身头像失败", err.message], "WEBUIAI")
         }
       }
       userPayload = AIManager._buildUserMessage(`${userMessage}\n${selfInfo.line}`, merged)
@@ -2366,7 +2381,9 @@ export default class AIManager {
     }
     session.addUserMessage(userPayload)
 
-    let client = AIManager.defaultClient
+
+    const roleTarget = AIManager._roleTarget("chat")
+    let client = roleTarget?.client || AIManager.defaultClient
     if (!client) throw new Error("AI 客户端未初始化")
 
     if (AIManager._budgetExceeded(session)) {
@@ -2375,13 +2392,15 @@ export default class AIManager {
       return { content, usage: { total_tokens: 0 }, toolCallCount: 0, taskMode, budgetExceeded: true }
     }
 
-    const primaryChannel = AIManager._activeChannel()
+    const primaryChannel =
+      (roleTarget?.client?.channelId && aiAdmin.get("channels", roleTarget.client.channelId)) ||
+      AIManager._activeChannel()
     const primaryOptions = AIManager._requestOptions(preset)
+    if (roleTarget?.model) primaryOptions.model = roleTarget.model
 
     const requestOptions = primaryOptions
     const toolConfig = aiAdmin.toolConfig
     const configuredRounds = toolConfig.maxToolRounds ?? cfg.ai?.maxToolRounds
-
     const roundsRaw =
       configuredRounds === null || configuredRounds === undefined || configuredRounds === ""
         ? 5
@@ -2395,7 +2414,7 @@ export default class AIManager {
       Bot.makeLog("info", [
         `任务模式：最多 ${maxToolRounds} 轮工具调用，上限 ${Math.round(AIManager.TASK_MAX_MS / 60000)} 分钟`,
         String(userMessage).slice(0, 60),
-      ], "AIManager")
+      ], "WEBUIAI")
     const toolQuery = [
       userMessage,
       ...skills.map(skill => `${skill.name} ${(skill.keywords || []).join(" ")} ${(skill.tools || []).join(" ")}`),
@@ -2446,15 +2465,15 @@ export default class AIManager {
         lazyTools
           ? `懒加载工具：本轮提供 ${tools.length} 个（检索入口 + ${lazyActivated.length} 个已激活，预算 ${toolBudget} token）：${tools.map(t => t.function?.name).filter(Boolean).join(",")}`
           : `本轮向 AI 提供 ${tools.length} 个工具（预算 ${toolBudget} token）：${tools.map(t => t.function?.name).filter(Boolean).join(",")}`,
-        "AIManager",
+        "WEBUIAI",
       )
+
 
       await AIManager._maybeCompress(session, client)
 
       const messages = session.getMessages()
 
       const streamSink = typeof e?._aiOnStreamChunk === "function" ? e._aiOnStreamChunk : null
-
       const streamDeferred = lazyTools || tools.length > 0
       const deferredChunks = []
 
@@ -2467,11 +2486,11 @@ export default class AIManager {
       for (let round = 0; round < maxToolRounds; round++) {
         if (taskMode && round > 0) {
           if (Date.now() - startedAt > AIManager.TASK_MAX_MS) {
-            Bot.makeLog("warn", ["任务模式超过时长上限，提前收尾", `${Math.round((Date.now() - startedAt) / 1000)} 秒`], "AIManager")
+            Bot.makeLog("warn", ["任务模式超过时长上限，提前收尾", `${Math.round((Date.now() - startedAt) / 1000)} 秒`], "WEBUIAI")
             break
           }
           if (toolCallCount >= AIManager.TASK_MAX_TOOL_CALLS) {
-            Bot.makeLog("warn", ["任务模式达到工具调用上限，提前收尾", String(toolCallCount)], "AIManager")
+            Bot.makeLog("warn", ["任务模式达到工具调用上限，提前收尾", String(toolCallCount)], "WEBUIAI")
             break
           }
         }
@@ -2517,7 +2536,7 @@ export default class AIManager {
               Bot.makeLog(
                 "warn",
                 [`主模型 ${options.model} 失败，改用备选 ${candidate.model}${target.client ? `（渠道「${candidate.channel.name}」）` : ""}`, error.message],
-                "AIManager",
+                "WEBUIAI",
               )
               try {
                 const result = await (target.client && target.client !== client
@@ -2535,7 +2554,7 @@ export default class AIManager {
                   : runRound(target.options))
                 return { result, used: target }
               } catch (nextError) {
-                Bot.makeLog("warn", [`备选 ${candidate.model} 也失败：${nextError.message}`], "AIManager")
+                Bot.makeLog("warn", [`备选 ${candidate.model} 也失败：${nextError.message}`], "WEBUIAI")
               }
             }
             throw error
@@ -2548,7 +2567,7 @@ export default class AIManager {
           Bot.makeLog(
             "info",
             [`备选模型接管：${roundOptions.model} → ${attempt.used.candidate.model}`],
-            "AIManager",
+            "WEBUIAI",
           )
 
           activeOptions = {
@@ -2561,11 +2580,12 @@ export default class AIManager {
         addUsage(result.usage)
         AIManager._addUsageToSession(session, result.usage)
 
+
         if (!forcedSearch && (!result.toolCalls || result.toolCalls.length === 0)) {
           const searchTool = AIManager._forceSearchTarget(userMessage, result.content, tools)
           if (searchTool) {
             forcedSearch = true
-            Bot.makeLog("info", ["AI 未调用工具却答应/被要求搜索，强制调用", searchTool], "AIManager")
+            Bot.makeLog("info", ["AI 未调用工具却答应/被要求搜索，强制调用", searchTool], "WEBUIAI")
             const pendingChunks = deferredChunks.splice(0)
             try {
               result = await runRound({
@@ -2575,17 +2595,20 @@ export default class AIManager {
               addUsage(result.usage)
               AIManager._addUsageToSession(session, result.usage)
             } catch (err) {
+
               deferredChunks.unshift(...pendingChunks)
-              Bot.makeLog("warn", ["强制搜索失败，按原回复继续", err.message], "AIManager")
+              Bot.makeLog("warn", ["强制搜索失败，按原回复继续", err.message], "WEBUIAI")
             }
           }
         }
+
+
 
         if (!forcedSave && (!result.toolCalls || result.toolCalls.length === 0)) {
           const saveTool = AIManager._forceStickerTarget(userMessage, e, tools)
           if (saveTool) {
             forcedSave = true
-            Bot.makeLog("info", ["AI 未调用工具却声称存表情，强制调用", saveTool], "AIManager")
+            Bot.makeLog("info", ["AI 未调用工具却声称存表情，强制调用", saveTool], "WEBUIAI")
             const pendingChunks = deferredChunks.splice(0)
             try {
               result = await runRound({
@@ -2596,15 +2619,17 @@ export default class AIManager {
               AIManager._addUsageToSession(session, result.usage)
             } catch (err) {
               deferredChunks.unshift(...pendingChunks)
-              Bot.makeLog("warn", ["强制保存表情失败，按原回复继续", err.message], "AIManager")
+              Bot.makeLog("warn", ["强制保存表情失败，按原回复继续", err.message], "WEBUIAI")
             }
           }
         }
 
+
+
         if (!resumed && (!result.toolCalls || result.toolCalls.length === 0) && tools.length > 1) {
           if (AIManager._promisedAction(result.content)) {
             resumed = true
-            Bot.makeLog("info", ["AI 承诺了动作但没执行，续跑一轮", String(result.content).slice(0, 60)], "AIManager")
+            Bot.makeLog("info", ["AI 承诺了动作但没执行，续跑一轮", String(result.content).slice(0, 60)], "WEBUIAI")
             const pendingChunks = deferredChunks.splice(0)
             try {
               result = await runRound({ ...roundOptions, toolChoice: "auto" })
@@ -2612,7 +2637,7 @@ export default class AIManager {
               AIManager._addUsageToSession(session, result.usage)
             } catch (err) {
               deferredChunks.unshift(...pendingChunks)
-              Bot.makeLog("warn", ["续跑失败，按原回复继续", err.message], "AIManager")
+              Bot.makeLog("warn", ["续跑失败，按原回复继续", err.message], "WEBUIAI")
             }
           }
         }
@@ -2642,7 +2667,7 @@ export default class AIManager {
         Bot.makeLog("info", [
           `AI 调用工具 [第${round + 1}轮]`,
           result.toolCalls.map(tc => tc.name).join(", "),
-        ], "AIManager")
+        ], "WEBUIAI")
 
         messages.push({
           role: "assistant",
@@ -2713,13 +2738,12 @@ export default class AIManager {
       }
 
       if (maxToolRounds > 0) {
-        Bot.makeLog("warn", `AI 工具调用达到最大轮次 ${maxToolRounds}`, "AIManager")
+        Bot.makeLog("warn", `AI 工具调用达到最大轮次 ${maxToolRounds}`, "WEBUIAI")
       }
       const finalOptions = { ...activeOptions, temperature: 0.3 }
       const finalResult = await activeClient.chat(messages, finalOptions)
       addUsage(finalResult.usage)
       AIManager._addUsageToSession(session, finalResult.usage)
-
       const finalContent = AIManager._sanitizeReply(
         AIManager._guardStickerSendClaim(
           AIManager._guardStickerClaim(
@@ -2743,7 +2767,7 @@ export default class AIManager {
     } catch (err) {
       success = false
       errorMessage = err.message
-      Bot.makeLog("error", ["AI Tool Calling 错误", err.message], "AIManager")
+      Bot.makeLog("error", ["AI Tool Calling 错误", err.message], "WEBUIAI")
 
       if (/超时|aborted due to timeout/i.test(err.message || "")) {
         session.messages.pop()
@@ -2757,6 +2781,7 @@ export default class AIManager {
         e,
         client,
         preset,
+        model: roleTarget?.model,
         usage: usageTotals,
         latencyMs: Date.now() - startedAt,
         toolCalls: toolCallCount,
@@ -2767,7 +2792,7 @@ export default class AIManager {
       try {
         await AIManager._drainDeferredReactions(conversationId, session)
       } catch (err) {
-        Bot.makeLog("warn", ["记录接话表情失败", err.message], "AIManager")
+        Bot.makeLog("warn", ["记录接话表情失败", err.message], "WEBUIAI")
       }
       AIManager._persistSession(conversationId, session, e)
     }
@@ -2775,7 +2800,6 @@ export default class AIManager {
 
   static _cleanPiece(text) {
     const cleaned = String(text || "")
-
       .replace(/#{2,}\s*[A-Za-z]*/g, "")
       .replace(/\*\*([^*]+)\*\*/g, "$1")
       .replace(/^\s*`+|`+\s*$/gm, "")
@@ -2787,7 +2811,6 @@ export default class AIManager {
       .map(line => line.trim())
       .filter(Boolean)
     if (!lines.length) return ""
-
     let out = ""
     for (const line of lines) {
       if (!out) {
@@ -2805,7 +2828,6 @@ export default class AIManager {
     let text = String(raw ?? "")
     if (!text.trim()) return ""
     const bar = "[|｜]"
-
     const block = new RegExp(
       `<${bar}{0,2}\\s*(?:DSML|dsml)?\\s*${bar}{0,2}\\s*calls\\s*>`,
       "gi",
@@ -2817,10 +2839,8 @@ export default class AIManager {
         "gi",
       )
       text = text.replace(pair, "")
-
       text = text.replace(new RegExp(`<${bar}{0,2}\\s*(?:DSML|dsml)?\\s*${bar}{0,2}\\s*calls\\s*>[\\s\\S]*$`, "gi"), "")
     }
-
     text = text
       .replace(new RegExp(`</?${bar}{1,2}\\s*(?:DSML|dsml)?\\s*${bar}{1,2}\\s*[\\w-]+[^>]*>`, "gi"), "")
       .trim()
@@ -2835,7 +2855,6 @@ export default class AIManager {
       .replace(/[（(]\s*发(?:了|送|出)?\s*(?:一张|一个|个)?\s*[^）)]{0,24}[）)]/g, "")
       .replace(/\[当时的你[^\]]*\]\s*/g, "")
       .replace(/\[人格切换\][^\n]*/g, "")
-
       .replace(/[，,；;]?\s*按你说的[，,。.！!？?]?\s*/g, "")
       .replace(/[，,；;]?\s*用同一套(?:工具|方法|方式)?[，,。.！!？?]?\s*/g, "")
       .replace(/[（(][^）)]{0,20}(?:工具|功能|接口|权限)[^）)]{0,20}[）)]/g, "")
@@ -2864,7 +2883,6 @@ export default class AIManager {
       }
       if (key === prev) {
         repeatRun++
-
         if (repeatRun >= 2) continue
       } else {
         repeatRun = 0
@@ -2913,15 +2931,17 @@ export default class AIManager {
         groupName: e?.group_name,
       })
     } catch (err) {
-      Bot.makeLog("warn", ["AI 会话保存失败", err.message], "AIManager")
+      Bot.makeLog("warn", ["AI 会话保存失败", err.message], "WEBUIAI")
     }
   }
+
 
   static _recordChat({
     conversationId,
     e,
     client,
     preset,
+    model = "",
     usage = {},
     latencyMs = 0,
     toolCalls = 0,
@@ -2941,7 +2961,7 @@ export default class AIManager {
         channelName: client?.channelName,
         presetId: resolved?.id,
         presetName: resolved?.name,
-        model: client?.model,
+        model: model || client?.model,
         promptTokens: usage?.prompt_tokens,
         completionTokens: usage?.completion_tokens,
         totalTokens: usage?.total_tokens,
@@ -2953,7 +2973,7 @@ export default class AIManager {
         content,
       })
     } catch (err) {
-      Bot.makeLog("warn", ["AI 调用记录失败", err.message], "AIManager")
+      Bot.makeLog("warn", ["AI 调用记录失败", err.message], "WEBUIAI")
     }
   }
 
@@ -2987,7 +3007,7 @@ export default class AIManager {
         error: result?.success === false ? result?.error || "" : "",
       })
     } catch (err) {
-      Bot.makeLog("warn", ["AI 工具记录失败", err.message], "AIManager")
+      Bot.makeLog("warn", ["AI 工具记录失败", err.message], "WEBUIAI")
     }
   }
 
@@ -3029,7 +3049,6 @@ export default class AIManager {
 
   static _formatMemoryEntry(entry, detailed = true, options = {}) {
     const hideNumbers = options.hideRelationNumbers === true
-
     const currentPresetId = String(options.currentPresetId || "")
     const foreignPreset =
       entry.presetId && currentPresetId && String(entry.presetId) !== currentPresetId
@@ -3038,7 +3057,6 @@ export default class AIManager {
     const label = AIManager._memoryScopeLabel(entry.scope)
     const date = String(entry.occurredAt || entry.createdAt || "").slice(0, 10)
     const summary = entry.title || entry.content || entry.event
-
     const evolutions = Array.isArray(entry.reinterpretations) ? entry.reinterpretations : []
     const moodHint = evolutions.length
       ? `｜曾被重新理解 ${evolutions.length} 次，当前印象${entry.valence > 0.2 ? "偏暖" : entry.valence < -0.2 ? "偏冷" : "中性"}`
@@ -3048,7 +3066,6 @@ export default class AIManager {
           .slice(-2)
           .map(item => `  · 后来觉得：${AIManager._clipText(item.text, 200)}`)
       : []
-
     const emotionHint = AIManager._emotionHint(entry)
     if (options.brief) {
       const byWhom = foreignPreset ? `（${foreignPreset}记下的）` : ""
@@ -3137,7 +3154,6 @@ export default class AIManager {
     const lines = []
     const foreignHint = entry => {
       if (!context.groupId) return ""
-
       if (AIManager.memoryStore.isPrivateOrigin?.(entry))
         return "（来自私聊或后台，本群只当背景知道，不要主动提起，被问到才可承认知道）"
       if (!String(entry.scope).startsWith("user:")) return ""
@@ -3171,7 +3187,6 @@ export default class AIManager {
     const primary = context.primary || []
     const episodes = primary.filter(entry => entry.kind === "episode")
     const facts = primary.filter(entry => entry.kind !== "episode")
-
     const crossContext = entry => {
       if (!context.groupId) return false
       if (!String(entry.scope).startsWith("user:")) return false
@@ -3296,7 +3311,7 @@ export default class AIManager {
         if (key && Number.isFinite(count) && count > 0) AIManager._memoryCounters.set(key, count)
       }
     } catch (err) {
-      Bot.makeLog("warn", ["读取记忆计数器失败", err.message], "AIManager")
+      Bot.makeLog("warn", ["读取记忆计数器失败", err.message], "WEBUIAI")
     }
   }
 
@@ -3312,7 +3327,7 @@ export default class AIManager {
         fs.writeFileSync(temp, JSON.stringify({ version: 1, counters }, null, 2), "utf8")
         fs.renameSync(temp, MEMORY_COUNTER_FILE)
       } catch (err) {
-        Bot.makeLog("warn", ["保存记忆计数器失败", err.message], "AIManager")
+        Bot.makeLog("warn", ["保存记忆计数器失败", err.message], "WEBUIAI")
       }
     }, 2000)
     AIManager._memoryCounterTimer.unref?.()
@@ -3340,14 +3355,12 @@ export default class AIManager {
 
     const conversationId = AIManager._conversationIdOf(e)
     const session = AIManager.sessions.get(conversationId)
-
     const selfName = AIManager._resolvePreset(e)?.name || "助手"
     const sourceMessages = session?.messages || []
     const historyMessages = []
     for (let i = 0; i < sourceMessages.length; i++) {
       const message = sourceMessages[i]
       if (message.role !== "user" && message.role !== "assistant") continue
-
       if (message.internal || /^\[系统\]\s*群里已经安静一会儿了/.test(String(message.content || ""))) {
         if (sourceMessages[i + 1]?.role === "assistant") i++
         continue
@@ -3453,7 +3466,6 @@ export default class AIManager {
           {
             kind,
             content,
-
             title: String(item.title || "").trim() || content.slice(0, 20),
             event: item.event,
             feelings: item.feelings,
@@ -3483,14 +3495,11 @@ export default class AIManager {
             scope,
             originChat: AIManager._relationScope(e),
             originGroupId: e.group_id || "",
-
             originUserId: e.user_id ? String(e.user_id) : "",
             originMessageId: e.message_id ? String(e.message_id) : "",
             originExcerpt: AIManager._clipText(userMessage, 200),
-
             validFrom: e.time ? new Date(Number(e.time) * 1000).toISOString() : new Date().toISOString(),
             source: "ai",
-
             presetId: AIManager._resolvePreset(e)?.id || "",
             presetName: AIManager._resolvePreset(e)?.name || "",
           },
@@ -3501,7 +3510,6 @@ export default class AIManager {
         )
         if (added.success) {
           saved++
-
           const reinterprets = Array.isArray(item.reinterprets) ? item.reinterprets : []
           for (const target of reinterprets.slice(0, 3)) {
             const targetId = String(target?.id || "").trim()
@@ -3513,7 +3521,7 @@ export default class AIManager {
               byId: added.entry?.id || "",
             })
             if (applied.success)
-              Bot.makeLog("info", [`记忆再解读 [${targetId}]`, reading.slice(0, 60), `情绪: ${applied.entry?.valence}`], "AIManager")
+              Bot.makeLog("info", [`记忆再解读 [${targetId}]`, reading.slice(0, 60), `情绪: ${applied.entry?.valence}`], "WEBUIAI")
           }
 
           const superseded = (Array.isArray(item.supersedes) ? item.supersedes : [])
@@ -3525,14 +3533,14 @@ export default class AIManager {
               reason: content.slice(0, 300),
             })
             if (retired.success && !retired.already)
-              Bot.makeLog("info", [`记忆被推翻 [${oldId}]`, `→ ${added.entry?.id}`, `原因: ${content.slice(0, 60)}`], "AIManager")
+              Bot.makeLog("info", [`记忆被推翻 [${oldId}]`, `→ ${added.entry?.id}`, `原因: ${content.slice(0, 60)}`], "WEBUIAI")
           }
         }
       }
-      if (saved) Bot.makeLog("info", `自动整理回忆 ${saved} 条 [${key}]`, "AIManager")
+      if (saved) Bot.makeLog("info", `自动整理回忆 ${saved} 条 [${key}]`, "WEBUIAI")
       return saved > 0
     } catch (err) {
-      Bot.makeLog("debug", ["自动回忆整理失败", err.message], "AIManager")
+      Bot.makeLog("debug", ["自动回忆整理失败", err.message], "WEBUIAI")
       return false
     }
   }
@@ -3544,7 +3552,6 @@ export default class AIManager {
     if (!memoryCfg.enabled || !memoryCfg.autoCompress) return false
     if (AIManager._autoCompressing) return false
     const store = AIManager.memoryStore
-
     const active = store.entries.filter(entry => !entry.validTo && !entry.pinned)
     if (active.length < (Number(memoryCfg.compressThreshold) || 60)) return false
     if (!AIManager.defaultClient) return false
@@ -3552,7 +3559,7 @@ export default class AIManager {
     try {
       const result = await compressMemories({
         entries: store.entries,
-        getClient: () => AIManager.defaultClient,
+        getClient: () => AIManager._roleChatClient("profile") || AIManager.defaultClient,
         store,
         maxBuckets: 5,
       })
@@ -3560,12 +3567,12 @@ export default class AIManager {
         Bot.makeLog(
           "info",
           [`自动整理回忆：${result.archived} 条合并为 ${result.created} 条`, `活跃 ${active.length} 条`],
-          "AIManager",
+          "WEBUIAI",
         )
       }
       return result.created > 0
     } catch (err) {
-      Bot.makeLog("debug", ["自动整理回忆失败", err.message], "AIManager")
+      Bot.makeLog("debug", ["自动整理回忆失败", err.message], "WEBUIAI")
       return false
     } finally {
       AIManager._autoCompressing = false
@@ -3667,12 +3674,12 @@ export default class AIManager {
         })
         if (added?.success) {
           saved++
-          Bot.makeLog("info", [`自动写入知识 [${scope}]`, `${added.action}: ${title}`], "AIManager")
+          Bot.makeLog("info", [`自动写入知识 [${scope}]`, `${added.action}: ${title}`], "WEBUIAI")
         }
       }
       return saved > 0
     } catch (err) {
-      Bot.makeLog("debug", ["自动知识整理失败", err.message], "AIManager")
+      Bot.makeLog("debug", ["自动知识整理失败", err.message], "WEBUIAI")
       return false
     }
   }
@@ -3681,7 +3688,6 @@ export default class AIManager {
     try {
       const mod = await import("./knowledgeBaseInstance.js")
       const generation = mod.knowledgeBaseGeneration?.() ?? 0
-
       if (AIManager._kbInstance && AIManager._kbGeneration === generation) return AIManager._kbInstance
       AIManager._kbInstance = mod.getKnowledgeBase?.() || null
       AIManager._kbGeneration = generation
@@ -3715,14 +3721,19 @@ export default class AIManager {
     }
   }
 
+
+
+
+
+
   static async _maybeCompress(session, client) {
     if (session.needsCompression()) {
       Bot.makeLog("info", [
         "触发上下文压缩",
         `当前 token: ${session.tokenCount}`,
         `轮次: ${session.userMessages.length}`,
-      ], "AIManager")
-      await session.compress(client)
+      ], "WEBUIAI")
+      await session.compress(AIManager._roleChatClient("summary") || client)
     }
   }
 
@@ -3754,23 +3765,16 @@ export default class AIManager {
     }
     if (AIManager._searchIntent(userMessage) && AIToolRegistry.sources.has("web_search"))
       add(AIToolRegistry._exposedName("web_search"))
-
     if (aiAdmin.stickerConfig?.enabled !== false) add("sticker_send")
-
     if (AIManager._stickerIntent(userMessage) || AIManager._hasImageSignal(e)) {
       for (const name of ["sticker_save", "sticker_search"]) add(name)
-
       if (!AIManager._clientSupportsVision()) add("sticker_describe")
     }
-
     if (aiAdmin.memoryConfig?.allowSelfPersonaEdit === true) add("persona_edit")
-
     if (AIManager._moderationIntent(userMessage) || AIManager._isPokeEvent(e)) {
       for (const name of ["group_mute_member", "group_unmute_member", "group_poke_member"]) add(name)
-
       if (!e?.isMaster) add("group_recent_messages")
     }
-
     if (AIManager._selfIntent(userMessage)) add("self_profile")
     if (AIManager._launchIntent(userMessage)) {
       add("launch_program")
@@ -3814,7 +3818,6 @@ export default class AIManager {
     if (!value) return false
     if (/QQ号|QQ 号|账号|昵称|头像|你的资料/.test(value)) return true
     if (/你(是|叫|自己的)/.test(value)) return true
-
     if (/管理|群主/.test(value) && /你/.test(value) && !/管理得|怎么管理|如何管理|帮我管理/.test(value)) return true
     return false
   }
@@ -3827,13 +3830,18 @@ export default class AIManager {
     return /表情|表情包|存图|存一下|存起来|保存这张|斗图|发图|上传|存着|存下/.test(String(text || ""))
   }
 
+
+
+
+
+
   static _guardStickerClaim(content, userMessage, stickerSaveOk = 0, hasImage = false, toolCallCount = 0) {
     const text = String(content || "")
     if (!text || stickerSaveOk > 0) return text
     const claimed = /(存好|存上|存了|存进|保存好|保存了|归我|收下了|已经存|已存|入库|记下了|提交审核|提交了)/.test(text)
     if (!claimed) return text
     if (!AIManager._stickerIntent(userMessage) && !hasImage) return text
-    Bot.makeLog("warn", ["AI 声称已存表情但没有成功调用 sticker_save，已改写回复", text.slice(0, 80)], "AIManager")
+    Bot.makeLog("warn", ["AI 声称已存表情但没有成功调用 sticker_save，已改写回复", text.slice(0, 80)], "WEBUIAI")
 
     return toolCallCount > 0
       ? "这张没存上：保存工具执行失败，请再发一次图或稍后重试。"
@@ -3848,7 +3856,7 @@ export default class AIManager {
       /(发给你|发你|发过去|已发|发好|发出|发了|发了张|发了张表情|扔了张|甩了张)/.test(text) ||
       /(表情).{0,10}(发|给)/.test(text)
     if (!claimed) return text
-    Bot.makeLog("warn", ["AI 声称发了表情但没有成功调用 sticker_send，已改写回复", text.slice(0, 80)], "AIManager")
+    Bot.makeLog("warn", ["AI 声称发了表情但没有成功调用 sticker_send，已改写回复", text.slice(0, 80)], "WEBUIAI")
     return "这张我没发出去：表情工具没有真正执行。"
   }
 
@@ -3861,12 +3869,10 @@ export default class AIManager {
   static _promisedAction(content) {
     const text = String(content || "").trim()
     if (!text || text.length > 120) return false
-
     const bare =
       /^(等会|等等|稍等|我这就|马上|立刻|我去|我看看|我查一下|我确认一下|我重新|让我|我先)/.test(text) &&
       !/[。！？!?]\S/.test(text.replace(/[（(].*?[）)]/g, ""))
     if (bare) return true
-
     return /(这就|马上|立刻|稍等|等我|我去|重新).{0,6}(查|搜|存|看|试|弄|处理)/.test(text) &&
       !/(已经|已|完成|好了|成功|失败|没有|找到了|存上|存好)/.test(text)
   }
@@ -3878,9 +3884,7 @@ export default class AIManager {
     const describeTool = pick(/(^|_)sticker_describe$/)
     const text = String(userMessage || "")
     if (!AIManager._stickerIntent(text)) return ""
-
     if (!AIManager._hasImageSignal(e) && !/\[图片\]|张图片|见附图/.test(text)) return ""
-
     const canSee = AIManager._clientSupportsVision()
     if (canSee && saveTool) return saveTool.function.name
     if (!canSee && describeTool) return describeTool.function.name
@@ -3896,10 +3900,11 @@ export default class AIManager {
     )
     if (limit > 0) defs = defs.slice(0, limit)
     if (Number.isFinite(budget)) {
+
       while (defs.length > 1 && client.estimateTokens(JSON.stringify(defs)) > budget) {
         const dropIndex = defs.length - 1
         if (dropIndex <= 0) break
-        Bot.makeLog("debug", [`工具预算不足，裁掉 ${defs[dropIndex]?.function?.name}`], "AIManager")
+        Bot.makeLog("debug", [`工具预算不足，裁掉 ${defs[dropIndex]?.function?.name}`], "WEBUIAI")
         defs = defs.slice(0, dropIndex)
       }
     }
@@ -3927,11 +3932,12 @@ export default class AIManager {
     }
     if (best.length) return best
 
+
     const minimal = AIToolRegistry.getOpenAITools(e, toolQuery, 1, preset)
     Bot.makeLog(
       "warn",
       [`工具预算不足（${budget} token），仅保留 ${minimal.length} 个工具`, `候选 ${all.length} 个`],
-      "AIManager",
+      "WEBUIAI",
     )
     return minimal
   }
@@ -4009,7 +4015,7 @@ export default class AIManager {
       else AIManager._freeGroupWindow.delete(key)
     }
     if (cleaned > 0) {
-      Bot.makeLog("debug", `清理了 ${cleaned} 个不活跃的 AI 会话`, "AIManager")
+      Bot.makeLog("debug", `清理了 ${cleaned} 个不活跃的 AI 会话`, "WEBUIAI")
     }
     return cleaned
   }
@@ -4092,7 +4098,7 @@ export default class AIManager {
           session.setSystemPrompt(AIManager._buildSystemPrompt(e, { preset: saved }))
           AIManager._persistSession(conversationId, session, e)
         }
-        Bot.makeLog("mark", [`[人格修改] ${preset.name} ${mode} ${content.length}字`], "AIManager")
+        Bot.makeLog("mark", [`[人格修改] ${preset.name} ${mode} ${content.length}字`], "WEBUIAI")
         return {
           success: true,
           preset: saved.id,
@@ -4125,12 +4131,13 @@ export default class AIManager {
         const imageCfg = aiAdmin.imageConfig
         if (imageCfg.enabled === false)
           return { success: false, error: "绘图功能已在 WebUI 中关闭" }
+
         const preset =
           aiAdmin.getImagePreset() ||
           aiAdmin.list("imagePresets").find(item => item.enabled) ||
           null
-        const client = AIManager._imageClientForPreset(preset)
-        if (!client) return { success: false, error: "AI 客户端未初始化" }
+        const target = AIManager._imageTarget(preset)
+        if (!target.client) return { success: false, error: "AI 客户端未初始化" }
         const prompt = [preset?.promptPrefix, args.prompt]
           .filter(Boolean)
           .join(" ")
@@ -4141,9 +4148,9 @@ export default class AIManager {
           ? String(args.size)
           : preset?.size
 
-        const result = await client.generateImage({
+        const result = await target.client.generateImage({
           prompt,
-          model: preset?.model,
+          model: target.model,
           size,
           quality: preset?.quality,
           style: preset?.style,
@@ -4158,7 +4165,7 @@ export default class AIManager {
             await e.reply(segment.image(url))
             sent = true
           } catch (err) {
-            Bot.makeLog("warn", ["绘图发送失败", err.message], "AIManager")
+            Bot.makeLog("warn", ["绘图发送失败", err.message], "WEBUIAI")
           }
         }
         return {
@@ -4258,7 +4265,6 @@ export default class AIManager {
           context: { groupId: e?.group_id, userId: e?.user_id },
           limit: Math.min(30, Math.max(1, Number(args.limit) || 8)),
           depth: 2,
-
           emotion: args.emotion ? { primary: args.emotion } : AIManager._resolvePreset(e)?.mood
             ? { primary: AIManager._resolvePreset(e).mood }
             : null,
@@ -4450,7 +4456,6 @@ export default class AIManager {
         if (!entry) return { success: false, error: "未找到该回忆" }
         if (!AIManager.memoryStore.isVisible(entry, { groupId: e?.group_id, userId: e?.user_id }))
           return { success: false, error: "无权访问该回忆" }
-
         const ownScope =
           e?.isMaster ||
           (e?.user_id && entry.scope === `user:${e.user_id}`) ||
