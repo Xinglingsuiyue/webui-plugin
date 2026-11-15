@@ -1448,7 +1448,7 @@ function chatParseOneBotMessage(client, kind, targetId, item) {
   return item
 }
 
-async function fetchOneBotHistory(client, kind, targetId, botId, count) {
+async function fetchOneBotHistory(client, kind, targetId, botId, count, cursor = null) {
   if (typeof client?.sendApi !== "function") return null
   const numeric = /^\d{1,15}$/.test(targetId) ? Number(targetId) : 0
   if (!numeric) return null
@@ -1457,7 +1457,17 @@ async function fetchOneBotHistory(client, kind, targetId, botId, count) {
     kind === "group"
       ? { group_id: numeric, count, reverseOrder: true }
       : { user_id: numeric, count, reverseOrder: true }
-  const attempts = [base]
+  const attempts = []
+  if (cursor !== null && chatClientIsSnowLuma(client)) {
+    attempts.push(
+      kind === "group"
+        ? { group_id: numeric, count, reverse_order: true, message_id: cursor }
+        : { user_id: numeric, count, reverse_order: true, message_id: cursor },
+    )
+  } else if (cursor !== null) {
+    attempts.push({ ...base, message_id: cursor })
+  }
+  attempts.push(base)
   if (kind === "friend") attempts.push({ ...base, message_seq: -count })
   const anchor = chatCachedMessageId(client, kind, botId, targetId)
   if (anchor) attempts.push({ ...base, message_id: anchor })
@@ -1482,11 +1492,11 @@ async function fetchOneBotHistory(client, kind, targetId, botId, count) {
   return []
 }
 
-async function fetchChatHistory(kind, botId, targetId, target, client, count) {
+async function fetchChatHistory(kind, botId, targetId, target, client, count, cursor = null) {
   let error = null
   if (typeof client?.sendApi === "function") {
     try {
-      const messages = await fetchOneBotHistory(client, kind, targetId, botId, count)
+      const messages = await fetchOneBotHistory(client, kind, targetId, botId, count, cursor)
       if (messages) return { supported: true, messages, error }
     } catch (err) {
       return { supported: true, messages: [], error: err }
@@ -1497,7 +1507,9 @@ async function fetchChatHistory(kind, botId, targetId, target, client, count) {
   const icqq = chatProtocolModule(client)
   for (const source of sources) {
     const attempts = []
-    if (kind === "friend" && icqq) {
+    if (cursor !== null) {
+      attempts.push([Math.max(0, cursor - (icqq ? 1 : 0)), count])
+    } else if (kind === "friend" && icqq) {
       attempts.push([undefined, count], [0, count])
     } else {
       const seq = icqq ? chatCachedSeq(client, kind, botId, targetId) : 0
@@ -1659,6 +1671,31 @@ function normalizeChatMessage(item, selfId = "", client = null) {
   if (/^https?:\/\//i.test(avatar)) message.avatar = avatar
   if (quote) message.quote = quote
   return chatExpandMarkdown(message)
+}
+
+function chatHistoryCursorOf(item, kind, client) {
+  if (String(client?.adapter?.name || "") === "ICQQ") {
+    const value = Number(kind === "group" ? item?.seq : item?.time)
+    return Number.isFinite(value) && value !== 0 ? value : null
+  }
+  const version = client?.version || {}
+  const versionText = String(version.app_name || version.app_full_name || version.version || "")
+  if (/snowluma/i.test(versionText)) {
+    const raw = item?.message_id ?? item?.real_id ?? item?.id
+    const value = Number(raw)
+    return Number.isFinite(value) && value !== 0 ? value : null
+  }
+  const lagrange = /lagrange/i.test(versionText)
+  const raw = lagrange
+    ? item?.message_id ?? item?.id
+    : item?.message_seq ?? item?.seq ?? item?.message_id ?? item?.id
+  const value = Number(raw)
+  return Number.isFinite(value) && value !== 0 ? value : null
+}
+
+function chatClientIsSnowLuma(client) {
+  const version = client?.version || {}
+  return /snowluma/i.test(String(version.app_name || version.app_full_name || version.version || ""))
 }
 
 const chatAtNameCache = new Map()
@@ -5402,6 +5439,10 @@ function buildApp(opts) {
       const targetId = String(req.query.id ?? "").trim()
       if (!targetId) return fail(res, 400, kind === "group" ? "缺少群号" : "缺少账号")
       const count = Math.min(Math.max(Number(req.query.count) || 20, 1), 50)
+      const cursorRaw = String(req.query.cursor ?? "").trim()
+      const cursorValue = cursorRaw ? Number(cursorRaw) : null
+      if (cursorRaw && !Number.isFinite(cursorValue)) return fail(res, 400, "分页游标无效")
+      const hasCursor = cursorRaw !== ""
 
       const botId = String(req.query.botId ?? "").trim()
       const { client, target, error } = resolveChatTarget(kind, targetId, botId)
@@ -5438,12 +5479,22 @@ function buildApp(opts) {
           return { ...item, recalled: true, recalledBySelf: source === true }
         })
 
-      const history = await fetchChatHistory(kind, botId, targetId, target, client, count)
+      const history = await fetchChatHistory(
+        kind,
+        botId,
+        targetId,
+        target,
+        client,
+        count,
+        hasCursor ? cursorValue : null,
+      )
       if (!history.supported)
         return res.json({
           ok: true,
           supported: false,
           capabilities,
+          nextCursor: "",
+          hasMore: false,
           messages: markRecalled(
             attachChatReactions(
               kind,
@@ -5455,18 +5506,24 @@ function buildApp(opts) {
         })
 
       const names = kind === "friend" ? chatFriendNames(client) : null
-      const normalized = (Array.isArray(history.messages) ? history.messages : [])
+      const rawHistory = Array.isArray(history.messages) ? history.messages : []
+      const cursorById = new Map()
+      const normalized = rawHistory
         .map(item => {
           const message = normalizeChatMessage(item, selfId, client)
+          const cursor = chatHistoryCursorOf(item, kind, client)
+          if (message.id && cursor !== null) cursorById.set(String(message.id), cursor)
           if (names && message.name === message.userId)
             message.name = names.get(message.userId) || message.name
           return message
         })
         .filter(item => item.text || item.images.length || item.segments?.length)
-      const seenIds = new Set(normalized.map(item => String(item.id)))
-      for (const item of cachedChatMessages(kind, botId, targetId, RECENT_CHAT_LIMIT)) {
-        if (!item?.poke || seenIds.has(String(item.id))) continue
-        normalized.push(item)
+      if (!hasCursor) {
+        const seenIds = new Set(normalized.map(item => String(item.id)))
+        for (const item of cachedChatMessages(kind, botId, targetId, RECENT_CHAT_LIMIT)) {
+          if (!item?.poke || seenIds.has(String(item.id))) continue
+          normalized.push(item)
+        }
       }
       normalized.sort((a, b) => a.time - b.time)
       const recentSlice = normalized.slice(-count)
@@ -5479,12 +5536,29 @@ function buildApp(opts) {
         const cached = markRecalled(
           attachChatReactions(kind, botId, targetId, cachedChatMessages(kind, botId, targetId, count)),
         )
-        if (cached.length) return res.json({ ok: true, supported: true, capabilities, messages: cached })
+        if (cached.length)
+          return res.json({
+            ok: true,
+            supported: true,
+            capabilities,
+            messages: cached,
+            nextCursor: "",
+            hasMore: false,
+          })
         if (history.error)
           return fail(res, 502, `读取消息失败：${history.error?.message || "协议端未响应"}`)
       }
 
-      res.json({ ok: true, supported: true, capabilities, messages })
+      const cursorMessage = recentSlice.find(item => cursorById.has(String(item.id)))
+      const nextCursor = cursorMessage ? cursorById.get(String(cursorMessage.id)) : null
+      res.json({
+        ok: true,
+        supported: true,
+        capabilities,
+        messages,
+        nextCursor: nextCursor === null ? "" : String(nextCursor),
+        hasMore: rawHistory.length >= count && nextCursor !== null,
+      })
     }),
   )
 
