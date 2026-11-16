@@ -3764,10 +3764,16 @@
     <div class="config-foot"><span class="config-dirty" data-config-dirty="${view}">未修改</span></div>`;
   }
 
+  function configSavedType(field, value) {
+    const saved = Array.isArray(field.value) ? field.value : [];
+    const index = saved.findIndex(item => String(item) === String(value));
+    return index >= 0 ? saved[index] : value;
+  }
+
   function configListValue(field, values) {
     if (field.candidateKind) {
       const cache = field.candidateCache && typeof field.candidateCache === "object" ? field.candidateCache : {};
-      return values.map(value => (cache[String(value)] ? cache[String(value)].value : value));
+      return values.map(value => (cache[String(value)] ? cache[String(value)].value : configSavedType(field, value)));
     }
     return values.map(value => {
       const option = (field.options || []).find(item => String(item.value) === String(value));
@@ -3776,95 +3782,149 @@
         const number = Number(value);
         return Number.isFinite(number) ? number : value;
       }
-      return value;
+      return configSavedType(field, value);
     });
   }
 
-  function collectSubformValue(field, node) {
-    const schemas = field.schemas || [];
-    const rows = $$("[data-subform-row]", node).map(rowNode => {
-      const origin = Number.parseInt(rowNode.dataset.subformOrigin ?? "-1", 10);
-      const existing = Number.isInteger(origin) && origin >= 0;
-      const out = { __origin: existing ? origin : -1 };
-      const secretSet = {};
-      for (const sub of schemas) {
-        if (sub.hidden) continue;
-        if (sub.editor === "list" || sub.type === "array") {
-          const host = $$("[data-sub-list]", rowNode).find(item => item.dataset.subList === sub.key);
-          const values = host ? $$(".config-tag", host).map(tag => tag.dataset.tagValue).filter(value => value !== "") : [];
-          if (!values.length && sub.required) throw new Error(`「${sub.label || sub.key}」不能为空`);
-          out[sub.key] = configListValue(sub, values);
-          continue;
-        }
-        const input = $$("[data-sub-field]", rowNode).find(item => item.dataset.subField === sub.key);
-        if (!input) continue;
-        if (sub.secret) {
-          const value = input.value.trim();
-          const kept = input.dataset.subSecretSet === "1";
-          if (!value && !kept && sub.required) throw new Error(`「${sub.label || sub.key}」不能为空`);
-          out[sub.key] = value;
-          secretSet[sub.key] = kept || !!value;
-          continue;
-        }
-        if (sub.editor === "daterange") {
-          const inputs = $$("[data-sub-field]", rowNode).filter(item => item.dataset.subField === sub.key);
-          const texts = inputs.map(item => item.value.trim());
-          if (!texts.some(Boolean)) {
-            if (sub.required) throw new Error(`「${sub.label || sub.key}」不能为空`);
-            continue;
-          }
-          out[sub.key] = texts;
-          continue;
-        }
-        if (sub.editor === "color" || sub.editor === "date") {
-          const value = input.value.trim();
-          if (!value) {
-            if (sub.required) throw new Error(`「${sub.label || sub.key}」不能为空`);
-            continue;
-          }
-          if (sub.editor === "color" && !configColorParse(value)) throw new Error(`「${sub.label || sub.key}」颜色格式无效`);
-          out[sub.key] = value;
-          continue;
-        }
-        let value;
-        if (sub.editor === "switch" || sub.type === "boolean") value = !!input.checked;
-        else if (sub.editor === "json") {
-          const text = input.value.trim();
-          if (!text) value = undefined;
-          else {
-            try {
-              value = JSON.parse(text);
-            } catch (error) {
-              throw new Error(`「${sub.label || sub.key}」不是有效的 JSON`);
-            }
-          }
-        } else if (sub.editor === "textarea") value = input.value;
-        else if (sub.options?.length) {
-          value = input.value;
-          if (sub.type === "number" && value !== "") value = Number(value);
-        } else if (sub.type === "number") {
-          const raw = input.value.trim();
-          value = raw === "" ? undefined : Number(raw);
-        } else value = input.value;
-
-        if (value === undefined || value === "") {
-          if (sub.required) throw new Error(`「${sub.label || sub.key}」不能为空`);
-          continue;
-        }
-        if (sub.type === "number" && !Number.isFinite(value)) throw new Error(`「${sub.label || sub.key}」必须是数字`);
-        out[sub.key] = value;
+  function subformRowHasInput(rowNode, schemas) {
+    for (const sub of schemas) {
+      if (sub.hidden) continue;
+      if (sub.editor === "list" || sub.type === "array") {
+        const host = $$("[data-sub-list]", rowNode).find(item => item.dataset.subList === sub.key);
+        if (host && $$(".config-tag", host).some(tag => tag.dataset.tagValue !== "")) return true;
+        continue;
       }
-      if (Object.keys(secretSet).length) out.__secretSet = secretSet;
-      return out;
-    });
+      const inputs = $$("[data-sub-field]", rowNode).filter(item => item.dataset.subField === sub.key);
+      const input = inputs[0];
+      if (!input) continue;
+      if (sub.secret) {
+        if (input.value.trim() || input.dataset.subSecretSet === "1") return true;
+        continue;
+      }
+      if (sub.editor === "switch" || sub.type === "boolean") {
+        const defaultOn = sub.defaultValue === true || sub.defaultValue === 1 || sub.defaultValue === "1" || sub.defaultValue === "true";
+        if (!!input.checked !== defaultOn) return true;
+        continue;
+      }
+      if (inputs.some(item => String(item.value || "").trim())) return true;
+    }
+    return false;
+  }
+
+  function collectSubformValue(field, node, validate = true) {
+    const schemas = field.schemas || [];
+    const savedRows = Array.isArray(field.value)
+      ? field.value
+      : field.value && typeof field.value === "object"
+        ? [field.value]
+        : [];
+    const rows = $$("[data-subform-row]", node)
+      .map(rowNode => {
+        const origin = Number.parseInt(rowNode.dataset.subformOrigin ?? "-1", 10);
+        const existing = Number.isInteger(origin) && origin >= 0;
+        if (!existing && !subformRowHasInput(rowNode, schemas)) return null;
+        const savedRow = existing && savedRows[origin] && typeof savedRows[origin] === "object" ? savedRows[origin] : undefined;
+        const out = { __origin: existing ? origin : -1 };
+        const secretSet = {};
+        for (const sub of schemas) {
+          if (sub.hidden) continue;
+          if (sub.editor === "list" || sub.type === "array") {
+            const host = $$("[data-sub-list]", rowNode).find(item => item.dataset.subList === sub.key);
+            const values = host ? $$(".config-tag", host).map(tag => tag.dataset.tagValue).filter(value => value !== "") : [];
+            if (!values.length && sub.required && validate) throw new Error(`「${sub.label || sub.key}」不能为空`);
+            if (!values.length && !sub.required && existing && (!savedRow || savedRow[sub.key] === undefined)) continue;
+            out[sub.key] = configListValue(sub, values);
+            continue;
+          }
+          const input = $$("[data-sub-field]", rowNode).find(item => item.dataset.subField === sub.key);
+          if (!input) continue;
+          if (sub.secret) {
+            const value = input.value.trim();
+            const kept = input.dataset.subSecretSet === "1";
+            if (!value && !kept && sub.required && validate) throw new Error(`「${sub.label || sub.key}」不能为空`);
+            out[sub.key] = value;
+            secretSet[sub.key] = kept || !!value;
+            continue;
+          }
+          if (sub.editor === "daterange") {
+            const inputs = $$("[data-sub-field]", rowNode).filter(item => item.dataset.subField === sub.key);
+            const texts = inputs.map(item => item.value.trim());
+            if (!texts.some(Boolean)) {
+              if (sub.required && validate) throw new Error(`「${sub.label || sub.key}」不能为空`);
+              continue;
+            }
+            out[sub.key] = texts;
+            continue;
+          }
+          if (sub.editor === "color" || sub.editor === "date") {
+            const value = input.value.trim();
+            if (!value) {
+              if (sub.required && validate) throw new Error(`「${sub.label || sub.key}」不能为空`);
+              continue;
+            }
+            if (sub.editor === "color" && !configColorParse(value) && validate) throw new Error(`「${sub.label || sub.key}」颜色格式无效`);
+            out[sub.key] = value;
+            continue;
+          }
+          let value;
+          if (sub.editor === "switch" || sub.type === "boolean") {
+            const checked = !!input.checked;
+            const savedValue = savedRow ? savedRow[sub.key] : undefined;
+            if (savedValue !== undefined) {
+              const savedOn = savedValue === true || savedValue === 1 || savedValue === "1" || savedValue === "true";
+              if (checked === savedOn) {
+                out[sub.key] = savedValue;
+                continue;
+              }
+            }
+            if (!checked && existing && savedValue === undefined && !sub.required) continue;
+            value = checked;
+          } else if (sub.editor === "json") {
+            const text = input.value.trim();
+            if (!text) value = undefined;
+            else {
+              try {
+                value = JSON.parse(text);
+              } catch (error) {
+                if (validate) throw new Error(`「${sub.label || sub.key}」不是有效的 JSON`);
+                value = text;
+              }
+            }
+          } else if (sub.editor === "textarea") value = input.value;
+          else if (sub.options?.length) {
+            value = input.value;
+            if (sub.type === "number" && value !== "") value = Number(value);
+          } else if (sub.type === "number") {
+            const raw = input.value.trim();
+            if (!raw) value = undefined;
+            else {
+              value = Number(raw);
+              if (!Number.isFinite(value)) {
+                if (validate) throw new Error(`「${sub.label || sub.key}」必须是数字`);
+                value = raw;
+              }
+            }
+          } else value = input.value;
+
+          if (value === undefined || value === "") {
+            if (sub.required && validate) throw new Error(`「${sub.label || sub.key}」不能为空`);
+            continue;
+          }
+          out[sub.key] = value;
+        }
+        if (Object.keys(secretSet).length) out.__secretSet = secretSet;
+        return out;
+      })
+      .filter(Boolean);
     if (field.multiple === false) {
-      const row = rows[0] || { __origin: -1 };
+      const row = rows[0];
+      if (!row) return validate ? (field.alwaysArray ? [{ __origin: -1 }] : { __origin: -1 }) : field.value;
       return field.alwaysArray ? [row] : row;
     }
     return rows;
   }
 
-  function collectFieldValue(node, field) {
+  function collectFieldValue(node, field, options = {}) {
     const editor = field.editor;
     if (editor === "buttons") return field.value;
     if (editor === "switch" || editor === "switch01") {
@@ -3872,11 +3932,12 @@
       const checked = !!(input && input.checked);
       return editor === "switch01" ? (checked ? 1 : 0) : checked;
     }
-    if (editor === "subform") return collectSubformValue(field, node);
+    if (editor === "subform") return collectSubformValue(field, node, options.validate !== false);
     if (editor === "color") {
       const text = ($("[data-color-text]", node)?.value || "").trim();
       if (!text && (field.value === null || field.value === undefined)) return field.value;
-      if (text && !configColorParse(text)) throw new Error("颜色格式无效，支持 rgb / rgba / #hex / #hex8");
+      if (text && !configColorParse(text) && options.validate !== false)
+        throw new Error("颜色格式无效，支持 rgb / rgba / #hex / #hex8");
       return text;
     }
     if (editor === "date") {
@@ -3886,7 +3947,8 @@
     }
     if (editor === "daterange") {
       const texts = $$("[data-date-text]", node).map(input => input.value.trim());
-      if (texts.length < 2 || (!texts[0] && !texts[1])) return field.value;
+      if (texts.length < 2) return field.value;
+      if (!texts[0] && !texts[1]) return Array.isArray(field.value) ? [] : field.value;
       return texts;
     }
     if (editor === "json") {
@@ -3895,6 +3957,7 @@
       try {
         return JSON.parse(text);
       } catch (error) {
+        if (options.validate === false) return text;
         throw new Error("不是有效的 JSON");
       }
     }
@@ -3902,9 +3965,21 @@
     if (!input) return field.value;
     if (editor === "select" || (field.options?.length && editor !== "list")) {
       if (field.selectMultiple) {
-        const selected = Array.from(input.selectedOptions || [])
+        let selected = Array.from(input.selectedOptions || [])
           .map(option => option.value)
           .filter(value => value !== "");
+        if (field.cascadeMode !== "path" && Array.isArray(field.value) && field.value.length) {
+          const picked = new Map(selected.map(value => [String(value), value]));
+          const ordered = [];
+          for (const value of field.value) {
+            const key = String(value);
+            if (!picked.has(key)) continue;
+            ordered.push(picked.get(key));
+            picked.delete(key);
+          }
+          for (const value of picked.values()) ordered.push(value);
+          selected = ordered;
+        }
         const raw =
           field.cascadeMode === "path"
             ? selected.map(value => {
@@ -3959,14 +4034,20 @@
       if (field.dividerOnly || !field.key || field.readOnly || field.editor === "buttons") continue;
       const node = nodes.get(configPathKey(field));
       if (!node) continue;
+      let probe;
+      try {
+        probe = collectFieldValue(node, field, { validate: false });
+      } catch (error) {
+        throw new Error(`${field.label || configPathKey(field)}：${error.message}`);
+      }
+      if (field.secret && (probe === "" || probe === null || probe === undefined)) continue;
+      if (configEqual(probe, field.value)) continue;
       let value;
       try {
         value = collectFieldValue(node, field);
       } catch (error) {
         throw new Error(`${field.label || configPathKey(field)}：${error.message}`);
       }
-      if (field.secret && (value === "" || value === null || value === undefined)) continue;
-      if (configEqual(value, field.value)) continue;
       changes.push({ field, value });
     }
     return changes;
