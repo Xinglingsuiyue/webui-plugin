@@ -178,6 +178,15 @@ function presetPersonaTags(preset) {
 }
 
 
+function presetSendTags(preset) {
+  const extra =
+    preset?.stickersOwnOnly === true && Array.isArray(preset.stickersAllowedTags)
+      ? preset.stickersAllowedTags
+      : []
+  return uniqueTags([...presetPersonaTags(preset), ...extra]).slice(0, 12)
+}
+
+
 function generalTagsOf(cfg = {}) {
   const configured = Array.isArray(cfg.generalTags) ? uniqueTags(cfg.generalTags) : []
   return (configured.length ? configured : ["通用"]).slice(0, 12)
@@ -871,7 +880,7 @@ export function registerStickerTools(deps = {}) {
       const scope = {
         presetId: preset?.id || "",
         ownOnly: preset?.stickersOwnOnly === true,
-        tags: presetPersonaTags(preset),
+        tags: presetSendTags(preset),
         generalTags: generalTagsOf(cfg),
       }
 
@@ -885,7 +894,7 @@ export function registerStickerTools(deps = {}) {
         return {
           success: false,
           error: preset?.stickersOwnOnly
-            ? `当前人格只允许发送自己上传的表情，没有匹配「${args.meaning || ""}」的${available ? `；可用：${available}` : "，而且库里还是空的"}`
+            ? `当前人格只允许发送归属标签为「${presetSendTags(preset).join("、")}」的表情，没有匹配「${args.meaning || ""}」的${available ? `；可用：${available}` : "，而且库里还是空的"}`
             : `表情库里没有匹配「${args.meaning || ""}」的表情${available ? `；可用：${available}` : "，库里还是空的"}`,
         }
       }
@@ -941,13 +950,13 @@ export function registerStickerTools(deps = {}) {
         limit: Math.min(30, Math.max(1, Number(args.limit) || 10)),
         presetId: preset?.id || "",
         ownOnly: preset?.stickersOwnOnly === true,
-        tags: presetPersonaTags(preset),
+        tags: presetSendTags(preset),
         generalTags: generalTagsOf(config()),
       })
       const stats = stickerStore.stats({
         presetId: preset?.id || "",
         ownOnly: preset?.stickersOwnOnly === true,
-        tags: presetPersonaTags(preset),
+        tags: presetSendTags(preset),
         generalTags: generalTagsOf(config()),
       })
       return {
@@ -1027,6 +1036,7 @@ export {
   loadImageBuffer,
   mimeOfBuffer,
   presetPersonaTags,
+  presetSendTags,
   generalTagsOf,
   DEFAULT_EMOTION_TAGS,
   DEFAULT_SCENE_TAGS,

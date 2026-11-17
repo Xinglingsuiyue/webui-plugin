@@ -2,7 +2,7 @@ import plugin from "../../../../lib/plugins/plugin.js"
 import cfg from "../../compat/config.js"
 import AIManager from "../AIManager.js"
 import { aiAdmin } from "../AIAdminStore.js"
-import { stickerStore, presetPersonaTags, generalTagsOf } from "./sticker.js"
+import { stickerStore, presetSendTags, generalTagsOf } from "./sticker.js"
 
 function conversationOf(e) {
   return AIManager._conversationIdOf(e)
@@ -165,7 +165,7 @@ export class AiSessionCommands extends plugin {
     const stats = stickerStore.stats({
       presetId: preset?.id || "",
       ownOnly: preset?.stickersOwnOnly === true,
-      tags: presetPersonaTags(preset),
+      tags: presetSendTags(preset),
       generalTags: generalTagsOf(cfg),
     })
     const pending = stickerStore.listPending().length
