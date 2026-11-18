@@ -24,7 +24,9 @@ import {
   registerStickerTools,
   stickerStore,
   collectEventImages,
+  collectImageRefs,
   loadImageBuffer,
+  loadStickerSource,
   mimeOfBuffer,
   autoCollectSticker,
   describeWithVision,
@@ -1839,6 +1841,8 @@ export default class AIManager {
       text,
       at: AIManager._atTargetsOf(e),
       userId: String(e.user_id || ""),
+      messageId: String(e.message_id ?? e.message_seq ?? e.seq ?? ""),
+      time: AIManager._messageTimeMs(e.time) || Date.now(),
     })
     if (list.length > AIManager._groupMessageCacheLimit)
       list.splice(0, list.length - AIManager._groupMessageCacheLimit)
@@ -1868,6 +1872,37 @@ export default class AIManager {
     } catch {
       return null
     }
+  }
+
+  static _messageTimeMs(value) {
+    const time = Number(value)
+    if (!Number.isFinite(time) || time <= 0) return 0
+    return time < 1e12 ? time * 1000 : time
+  }
+
+
+  static _mergeGroupHistory(remote, local, limit = 20) {
+    const seen = new Set()
+    const fingerprintOf = item => {
+      if (!item?.time) return ""
+      return `${item.userId}|${item.text}|${Math.floor(item.time / 2000)}`
+    }
+    const remember = item => {
+      if (item?.messageId) seen.add(`id:${item.messageId}`)
+      const fingerprint = fingerprintOf(item)
+      if (fingerprint) seen.add(`fp:${fingerprint}`)
+    }
+    const merged = []
+    for (const item of [...remote, ...local]) {
+      if (!item?.text) continue
+      const id = item.messageId ? `id:${item.messageId}` : ""
+      const fingerprint = fingerprintOf(item)
+      if ((id && seen.has(id)) || (fingerprint && seen.has(`fp:${fingerprint}`))) continue
+      remember(item)
+      merged.push(item)
+    }
+    merged.sort((a, b) => (a.time || 0) - (b.time || 0))
+    return merged.slice(-limit)
   }
 
 
@@ -1909,7 +1944,16 @@ export default class AIManager {
               .filter(seg => seg?.type === "at")
               .map(seg => String(seg.qq ?? seg.data?.qq ?? ""))
               .filter(Boolean)
-            return { name, text, at, userId: String(item?.user_id || "") }
+            return {
+              name,
+              text,
+              at,
+              userId: String(item?.user_id || ""),
+              messageId: String(
+                item?.message_id ?? item?.message_seq ?? item?.seq ?? item?.id ?? "",
+              ),
+              time: AIManager._messageTimeMs(item?.time),
+            }
           })
           .filter(item => item.text)
       } catch (err) {
@@ -1917,7 +1961,9 @@ export default class AIManager {
       }
     }
 
-    if (!list.length) list = AIManager._localGroupHistory(groupId, botId, limit)
+    const local = AIManager._localGroupHistory(groupId, botId, limit)
+    if (list.length) list = AIManager._mergeGroupHistory(list, local, limit)
+    else list = local
     if (cacheMs > 0) AIManager._groupHistoryCache.set(key, { at: Date.now(), list })
     return list
   }
@@ -2496,9 +2542,10 @@ export default class AIManager {
         const quoted = await AIManager._collectQuotedContext(evt)
         quotedTexts.push(...quoted.texts)
         extraImages.push(...quoted.images, ...collectEventImages(evt))
-        extraImageRefs.push(...(quoted.imageRefs || []))
+        extraImageRefs.push(...(quoted.imageRefs || []), ...collectImageRefs(evt))
       }
       if (extraImages.length) e._aiExtraImages = [...new Set(extraImages)]
+
       if (extraImageRefs.length) e._aiExtraImageRefs = extraImageRefs
       const parts = [contextInfo, ...quotedTexts]
       if (rawLines.length) parts.push(`用户消息: ${rawLines.join("\n")}`)
@@ -2628,21 +2675,62 @@ export default class AIManager {
     }
   }
 
+
+  static _mergeImageRefs(refs) {
+    const merged = []
+    for (const raw of refs) {
+      const url = String(raw?.url || "").trim()
+      const file = String(raw?.file || "").trim()
+      if (!url && !file) continue
+      const same = merged.find(
+        item =>
+          (url && (item.url === url || item.file === url)) ||
+          (file && (item.file === file || item.url === file)),
+      )
+      if (!same) {
+        merged.push({ url, file, bot: raw?.bot })
+        continue
+      }
+      if (!same.url && url && url !== same.file) same.url = url
+      if (!same.file && file && file !== same.url) same.file = file
+      if (!same.bot && raw?.bot) same.bot = raw.bot
+    }
+    return merged
+  }
+
+
+  static _messageImageRefs(e) {
+    const refs = []
+    for (const ref of Array.isArray(e?._aiExtraImageRefs) ? e._aiExtraImageRefs : []) refs.push(ref)
+    refs.push(...collectImageRefs(e))
+    for (const source of Array.isArray(e?._aiExtraImages) ? e._aiExtraImages : [])
+      refs.push({ url: String(source), file: "" })
+    return AIManager._mergeImageRefs(refs)
+  }
+
   static async _collectMessageImages(e, userMessage = "") {
     if (cfg.ai?.visionInput === false) return []
-    const sources = [...new Set([...collectEventImages(e), ...(Array.isArray(e?._aiExtraImages) ? e._aiExtraImages : [])])]
-    if (!sources.length) return []
+
+
+    const refs = AIManager._messageImageRefs(e)
+    if (!refs.length) return []
+
+
     const limit = Math.max(1, Number(cfg.ai?.maxImagesPerMessage) || 10)
     const budget = Math.max(1, Number(cfg.ai?.maxImageBytesPerMessage) || 12 * 1024 * 1024)
     const images = []
     let usedBytes = 0
+
     const loaded = await Promise.all(
-      sources.slice(0, limit).map(async source => {
+      refs.slice(0, limit).map(async ref => {
         try {
-          const buffer = await loadImageBuffer(source)
-          if (!buffer) return null
-          const mime = mimeOfBuffer(buffer)
-          return mime ? { mime, buffer } : null
+          const result = await loadStickerSource(ref, e)
+          if (!result.buffer) {
+            if (result.error) Bot.makeLog("debug", ["读取消息图片失败", result.error], "WEBUIAI")
+            return null
+          }
+          const mime = mimeOfBuffer(result.buffer)
+          return mime ? { mime, buffer: result.buffer } : null
         } catch (err) {
           Bot.makeLog("debug", ["读取消息图片失败", err.message], "WEBUIAI")
           return null
@@ -2662,8 +2750,8 @@ export default class AIManager {
       Bot.makeLog("debug", [`图片已读取 ${images.length} 张，但当前渠道未声明支持图片，已降级为文字提示`], "WEBUIAI")
       return { unsupported: true, count: images.length }
     }
-    if (sources.length && !images.length)
-      Bot.makeLog("debug", [`消息含 ${sources.length} 个图片来源，但全部下载/解码失败`], "WEBUIAI")
+    if (refs.length && !images.length)
+      Bot.makeLog("debug", [`消息含 ${refs.length} 个图片来源，但全部下载/解码失败`], "WEBUIAI")
     return images
   }
 
@@ -2744,14 +2832,22 @@ export default class AIManager {
     ])
   }
 
+
   static _forwardNodeOf(node) {
     const data = node?.data && (node.type === "node" || node.data.content || node.data.message || node.data.nickname)
       ? node.data
       : node
     const sender = data?.sender || {}
+    const flat = AIManager._flattenMessageSegments(data)
+    const imageRefs = AIManager._mergeImageRefs([...(flat.imageRefs || []), ...collectImageRefs(data)])
+    for (const ref of imageRefs) {
+      const source = ref.url || ref.file
+      if (source && !flat.images.includes(source)) flat.images.push(source)
+    }
     return {
       name: sender.card || sender.nickname || data?.nickname || sender.user_id || data?.user_id || "未知",
-      ...AIManager._flattenMessageSegments(data),
+      ...flat,
+      imageRefs,
     }
   }
 
@@ -2797,16 +2893,100 @@ export default class AIManager {
     }
   }
 
+
+
+
+
+
+  static async _getQuotedMessage(e, replyId) {
+    const id = String(replyId)
+    let firstError = null
+    if (typeof e?.getReply === "function") {
+      try {
+        const quoted = await AIManager._withTimeout(e.getReply())
+        const segments = AIManager._messageSegments(quoted).segments
+        if (quoted && (segments.length || quoted.raw_message))
+          return { message: quoted, bot: e.bot || null }
+      } catch (err) {
+        firstError = err
+      }
+    }
+
+
+    const bots = []
+    const seen = new Set()
+    const addBot = bot => {
+      if (!bot || seen.has(bot) || typeof bot.sendApi !== "function") return
+      seen.add(bot)
+      bots.push(bot)
+    }
+    addBot(e?.bot)
+    const targetGroup = e?.group_id ?? e?.groupId ?? e?.group?.group_id
+    for (const bot of Object.values(globalThis.Bot?.bots || {})) {
+      if (targetGroup && bot?.gl instanceof Map) {
+        const keys = [targetGroup, String(targetGroup), Number(targetGroup)]
+        if (!keys.some(key => bot.gl.has(key))) continue
+      }
+      addBot(bot)
+    }
+    for (const bot of bots) {
+      try {
+        const quoted = await AIManager._withTimeout(bot.sendApi("get_msg", { message_id: id }))
+        if (!quoted || !AIManager._quotedMessageMatches(quoted, e)) continue
+        if (bot !== e?.bot)
+          Bot.makeLog(
+            "debug",
+            [`引用消息 ${id} 已从账号 ${bot.self_id ?? bot.uin ?? ""} 补读`],
+            "WEBUIAI",
+          )
+        return { message: quoted, bot }
+      } catch (err) {
+        firstError ||= err
+      }
+    }
+    if (firstError) throw firstError
+    return null
+  }
+
+  static _quotedMessageMatches(msg, e) {
+    const targetGroup = e?.group_id ?? e?.groupId ?? e?.group?.group_id
+    if (targetGroup) {
+      const groupId = msg?.group_id ?? msg?.groupId ?? msg?.group?.group_id
+      if (groupId !== undefined && groupId !== null && String(groupId) !== String(targetGroup))
+        return false
+      return true
+    }
+    const userId = msg?.user_id ?? msg?.sender?.user_id
+    const selfId = String(e?.self_id || "")
+    if (userId !== undefined && userId !== null && String(userId) !== String(e?.user_id || "") && String(userId) !== selfId)
+      return false
+    return true
+  }
+
   static async _collectQuotedContext(e) {
     const extra = { texts: [], images: [], imageRefs: [] }
     const segments = Array.isArray(e?.message) ? e.message : []
 
-    const replyId = e?.reply_id || segments.find(seg => seg?.type === "reply")?.id
-    if (replyId && typeof e.getReply === "function") {
+    const replySeg = segments.find(seg => (seg?.type || seg?.data?.type) === "reply")
+    const replyId =
+      e?.reply_id || replySeg?.id || replySeg?.data?.id || replySeg?.data?.message_id
+    if (replyId) {
       try {
-        const quoted = await AIManager._withTimeout(e.getReply())
+        const fetched = await AIManager._getQuotedMessage(e, replyId)
+        if (!fetched?.message) throw new Error("无法读取被引用的消息")
+        const quoted = fetched.message
         await AIManager._ensureVoiceTexts([quoted], e)
         const parsed = AIManager._flattenMessageSegments(quoted)
+        const quotedRefs = AIManager._mergeImageRefs([
+          ...(parsed.imageRefs || []),
+          ...collectImageRefs(quoted),
+        ])
+        for (const ref of quotedRefs) {
+          const source = ref.url || ref.file
+          if (source && !parsed.images.includes(source)) parsed.images.push(source)
+        }
+        if (fetched.bot && fetched.bot !== e?.bot)
+          for (const ref of quotedRefs) ref.bot = fetched.bot
         const sender = quoted?.sender?.card || quoted?.sender?.nickname || quoted?.sender?.user_id || ""
 
         const quotedUserId = String(quoted?.sender?.user_id || quoted?.user_id || "")
@@ -2824,7 +3004,8 @@ export default class AIManager {
         if (parsed.text) extra.texts.push(`${head}\n${parsed.text}`)
         else if (parsed.images.length) extra.texts.push(`${head}（${parsed.images.length} 张图片，见附图）`)
         extra.images.push(...parsed.images)
-        extra.imageRefs.push(...(parsed.imageRefs || []))
+        extra.imageRefs.push(...quotedRefs)
+
         for (const id of AIManager._forwardIdsOf(quoted)) {
           try {
             const forward = await AIManager._readForward(e, id)
@@ -4551,6 +4732,9 @@ export default class AIManager {
       pluginName: "工具检索",
       permission: "all",
       danger: "low",
+      cacheTtl: 20,
+      cacheScope: "user",
+      cacheGroup: "tools",
       parameters: {
         type: "object",
         properties: {
@@ -4705,6 +4889,9 @@ export default class AIManager {
       pluginName: "AI 记忆",
       permission: "all",
       danger: "low",
+      cacheTtl: 10,
+      cacheScope: "user",
+      cacheGroup: "memory",
       parameters: {
         type: "object",
         properties: {
@@ -4762,6 +4949,9 @@ export default class AIManager {
       pluginName: "AI 记忆",
       permission: "all",
       danger: "low",
+      cacheTtl: 10,
+      cacheScope: "user",
+      cacheGroup: "memory",
       parameters: {
         type: "object",
         properties: {
@@ -4811,6 +5001,7 @@ export default class AIManager {
       pluginName: "AI 记忆",
       permission: "all",
       danger: "medium",
+      cacheInvalidates: ["memory"],
       parameters: {
         type: "object",
         properties: {
@@ -4956,6 +5147,7 @@ export default class AIManager {
       pluginName: "AI 记忆",
       permission: "all",
       danger: "low",
+      cacheInvalidates: ["memory"],
       parameters: {
         type: "object",
         properties: {
@@ -5004,6 +5196,7 @@ export default class AIManager {
       pluginName: "AI 记忆",
       permission: "all",
       danger: "medium",
+      cacheInvalidates: ["memory"],
       parameters: {
         type: "object",
         properties: {

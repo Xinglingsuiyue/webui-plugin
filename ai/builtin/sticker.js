@@ -451,27 +451,35 @@ export async function collectStickerSources(e) {
   return dedupeRefs(refs)
 }
 
+
 async function refreshSourceFromBot(e, ref) {
   const file = String(ref?.file || "").trim()
-  const bot = e?.bot
-  if (!file || !bot || typeof bot.sendApi !== "function") return ""
-  let timer
-  try {
-    const info = await Promise.race([
-      bot.sendApi("get_image", { file }),
-      new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error("刷新图片链接超时")), REFRESH_TIMEOUT)
-        timer.unref?.()
-      }),
-    ])
-    const fresh = sanitizeImageSource(info?.url || info?.file || "")
-    return /^https?:\/\//i.test(fresh) ? fresh : ""
-  } catch {
-    return ""
-  } finally {
-    clearTimeout(timer)
+  if (!file) return ""
+
+  const bots = []
+  for (const bot of [ref?.bot, e?.bot]) {
+    if (bot && typeof bot.sendApi === "function" && !bots.includes(bot)) bots.push(bot)
   }
+  for (const bot of bots) {
+
+    let timer
+    try {
+      const info = await Promise.race([
+        bot.sendApi("get_image", { file }),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("刷新图片链接超时")), REFRESH_TIMEOUT)
+          timer.unref?.()
+        }),
+      ])
+      const fresh = sanitizeImageSource(info?.url || info?.file || "")
+      if (/^https?:\/\//i.test(fresh)) return fresh
+    } catch {} finally {
+      clearTimeout(timer)
+    }
+  }
+  return ""
 }
+
 
 export async function loadStickerSource(ref, e) {
   const url = String(ref?.url || "").trim()
@@ -713,6 +721,7 @@ export function registerStickerTools(deps = {}) {
     pluginName: "表情包",
     permission: "all",
     danger: "medium",
+    cacheInvalidates: ["sticker"],
     parameters: {
       type: "object",
       properties: {
@@ -860,6 +869,7 @@ export function registerStickerTools(deps = {}) {
     pluginName: "表情包",
     permission: "all",
     danger: "low",
+    cacheInvalidates: ["sticker"],
     parameters: {
       type: "object",
       properties: {
@@ -930,6 +940,9 @@ export function registerStickerTools(deps = {}) {
     pluginName: "表情包",
     permission: "all",
     danger: "low",
+    cacheTtl: 60,
+    cacheScope: "preset",
+    cacheGroup: "sticker",
     parameters: {
       type: "object",
       properties: {
