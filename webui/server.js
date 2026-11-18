@@ -5501,6 +5501,7 @@ function buildApp(opts) {
         groups.push({
           group_id: override.id,
           name: `(未同步群 ${override.id})`,
+          avatar: chatGroupAvatarUrl(override.id),
           memberCount: 0,
           maxMemberCount: 0,
           botId: "",
