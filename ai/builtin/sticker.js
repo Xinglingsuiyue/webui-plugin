@@ -1,8 +1,15 @@
+
+
+
+
+
+
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import AIToolRegistry from "../AIToolRegistry.js"
 import AIStickerStore, { IMAGE_EXT, MAX_IMAGE_BYTES, sniffExt } from "../AIStickerStore.js"
+import { prepareVisionImage } from "../imageSimilarity.js"
 import { PROJECT_ROOT } from "../../paths.js"
 
 const STICKER_DIR = path.join(PROJECT_ROOT, "data", "stickers")
@@ -500,11 +507,13 @@ export async function loadStickerSource(ref, e) {
   return last
 }
 
+
 async function describeWithVision(buffer, client) {
   if (!client) return null
   const mime = mimeOfBuffer(buffer)
   if (!mime) return null
-  const dataUrl = `data:${mime};base64,${buffer.toString("base64")}`
+  const prepared = await prepareVisionImage(buffer, mime, { maxEdge: 1280 })
+  const dataUrl = `data:${prepared.mime};base64,${prepared.buffer.toString("base64")}`
   try {
     const result = await client.chat(
       [
