@@ -21,7 +21,7 @@ git clone --depth=1 https://github.com/Xinglingsuiyue/webui-plugin.git
 #云崽登录
 ```
 
-拿到带一次性登录码的面板地址，浏览器打开即可。默认只允许本机访问，外网访问需在 `plugins/webui-plugin/config/config/webui.yaml` 填写 `token` 或配置反代地址。
+拿到带一次性登录码的面板地址，浏览器打开即可。
 
 ## 功能
 
@@ -49,7 +49,7 @@ git clone --depth=1 https://github.com/Xinglingsuiyue/webui-plugin.git
 | `#结束对话` | 清空当前会话上下文 |
 | `#我的记忆` `#清除记忆` | 查看、清空个人回忆 |
 | `#群聊总结` | 总结本群近期聊天 |
-| `#webui更新` | 更新插件自身（仅主人），有本地改动时提示 |
+| `#webui更新` | 更新插件自身（仅主人） |
 | `#webui强制更新` | 覆盖本地改动，强制更新插件自身（仅主人） |
 
 ## 配置
@@ -60,9 +60,6 @@ git clone --depth=1 https://github.com/Xinglingsuiyue/webui-plugin.git
 | `plugins/webui-plugin/config/config/ai.yaml` | AI 开关、上下文、触发方式、工具与知识库 |
 | `plugins/webui-plugin/config/config/help.yaml` | 帮助面板标题、外观、皮肤、分组 |
 
-上面三份由插件首次加载时从 `config/default_config` 生成到插件目录，缺失也会自动补回；核心其余配置仍在 `config/config`。
-
-数据统一存放在 `data/webui/`。
 
 ## 致谢
 
