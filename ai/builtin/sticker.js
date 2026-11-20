@@ -528,7 +528,7 @@ async function describeWithVision(buffer, client) {
           ],
         },
       ],
-      { maxTokens: 200, temperature: 0.2, timeout: VISION_TIMEOUT },
+      { maxTokens: 200, temperature: 0.2, timeout: VISION_TIMEOUT, requestKind: "sticker" },
     )
     const text = String(result?.content || "").trim()
     if (!text) return null
@@ -604,7 +604,7 @@ async function retagWithVision(buffer, client) {
           ],
         },
       ],
-      { maxTokens: 300, temperature: 0.2, timeout: VISION_TIMEOUT },
+      { maxTokens: 300, temperature: 0.2, timeout: VISION_TIMEOUT, requestKind: "sticker" },
     )
     const text = String(result?.content || "").trim()
     if (!text) return { error: "模型没有返回内容" }
