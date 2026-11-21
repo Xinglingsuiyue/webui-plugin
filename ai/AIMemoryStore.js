@@ -6,7 +6,10 @@ import { isGroupId, normalizeGroupId as normalizeGroupKey } from "../compat/conf
 
 const STORE_FILE = path.join(WEBUI_DATA_DIR, "ai_memories.json")
 const HARD_LIMIT = 2000
-const STORE_VERSION = 2
+
+const STORE_VERSION = 4
+
+const AFFINITY_SCALE = 2
 const MAX_LINKS = 20
 const MAX_LIST_ITEMS = 12
 const LIST_FIELDS = ["feelings", "intentions", "actions", "interests", "taste", "opinions", "people"]
@@ -39,14 +42,16 @@ const TEXT_FIELDS = [
   "energy",
 ]
 const DEFAULT_RELATION = {
-  trust: 50,
-  affinity: 50,
+  trust: 0,
+  affinity: 0,
   interactions: 0,
   lastMood: "",
   lastEnergy: "",
   note: "",
   updatedAt: "",
 }
+
+const RELATION_DELTA_MAX = 1.5
 
 function newId() {
   return `m_${crypto.randomBytes(5).toString("hex")}`
@@ -57,9 +62,14 @@ function text(value, max = 4000) {
 }
 
 function clampNumber(value, min, max) {
+  if (value === null || value === undefined || value === "") return null
   const number = Number(value)
   if (!Number.isFinite(number)) return null
   return Math.min(max, Math.max(min, number))
+}
+
+function round2(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100
 }
 
 function normalizePromise(input, fallbackAt = "") {
@@ -163,19 +173,32 @@ function normalizeScope(scope) {
   return null
 }
 
+const RELATION_USER_RE = /^[\dA-Za-z_-]{3,64}$/
+
+function memberRelationScope(groupId, userId) {
+  const gid = normalizeGroupKey(groupId)
+  const uid = text(userId, 64).trim()
+  if (!isGroupId(gid) || !RELATION_USER_RE.test(uid)) return ""
+  return `group:${gid}:user:${uid}`
+}
+
 function normalizeRelationScope(scope) {
-  const value = text(scope, 60).trim()
-  if (!value || value === "global") return "global"
+  const value = text(scope, 200).trim()
+  if (!value) return null
+  if (value === "global") return "global"
+  const member = value.match(/^group:(.+):user:([\dA-Za-z_-]{3,64})$/)
+  if (member && isGroupId(member[1]))
+    return `group:${normalizeGroupKey(member[1])}:user:${member[2]}`
   if (/^group:.+$/.test(value) && isGroupId(value.slice(6)))
     return `group:${normalizeGroupKey(value.slice(6))}`
-  if (/^(user|private):\d{3,20}$/.test(value)) return value
+  if (/^(user|private):[\dA-Za-z_-]{3,64}$/.test(value)) return value
   return null
 }
 
-function defaultRelationScope(scope) {
+function defaultRelationScope(scope, userId = "") {
   const value = normalizeScope(scope)
-  if (!value) return "global"
-  if (value.startsWith("group:")) return value
+  if (!value) return null
+  if (value.startsWith("group:")) return memberRelationScope(value.slice(6), userId) || null
   if (value.startsWith("user:")) return `private:${value.slice(5)}`
   return "global"
 }
@@ -217,11 +240,24 @@ function sameDay(a, b) {
   return String(a || "").slice(0, 10) === String(b || "").slice(0, 10)
 }
 
+function normalizeRelationshipDelta(value) {
+  const number = clampNumber(value, -RELATION_DELTA_MAX, RELATION_DELTA_MAX)
+  if (number === null || number === 0) return null
+  return round2(number)
+}
+
 function normalizeRelationship(input = {}) {
   const source = input && typeof input === "object" ? input : {}
+  let trust = normalizeRelationshipDelta(source.trust)
+  let affinity = normalizeRelationshipDelta(source.affinity)
+  if (trust !== null && affinity !== null && Math.abs(trust) + Math.abs(affinity) > RELATION_DELTA_MAX) {
+    const scale = RELATION_DELTA_MAX / (Math.abs(trust) + Math.abs(affinity))
+    trust = round2(trust * scale)
+    affinity = round2(affinity * scale)
+  }
   return {
-    trust: clampNumber(source.trust, 0, 100),
-    affinity: clampNumber(source.affinity, 0, 100),
+    trust,
+    affinity,
     note: text(source.note, 500).trim(),
   }
 }
@@ -230,9 +266,9 @@ function normalizeRelation(input = {}) {
   const source = input && typeof input === "object" ? input : {}
   const base = { ...DEFAULT_RELATION }
   const trust = clampNumber(source.trust, 0, 100)
-  const affinity = clampNumber(source.affinity, 0, 100)
-  if (trust !== null) base.trust = Math.round(trust)
-  if (affinity !== null) base.affinity = Math.round(affinity)
+  const affinity = clampNumber(source.affinity, -100, 100)
+  if (trust !== null) base.trust = round2(trust)
+  if (affinity !== null) base.affinity = round2(affinity)
   base.interactions = Math.max(0, Math.floor(Number(source.interactions) || 0))
   base.lastMood = text(source.lastMood, 200).trim()
   base.lastEnergy = text(source.lastEnergy, 200).trim()
@@ -397,7 +433,28 @@ export default class AIMemoryStore {
       if (fs.existsSync(this.file)) {
         const parsed = JSON.parse(fs.readFileSync(this.file, "utf8"))
         const list = Array.isArray(parsed) ? parsed : parsed?.entries
-        needsPersist = Array.isArray(parsed) || Number(parsed?.version) < STORE_VERSION
+        const storeVersion = Number(parsed?.version) || 0
+        const affinityScale = Number(parsed?.affinityScale) || 1
+        if (affinityScale < AFFINITY_SCALE) {
+          const convert = target => {
+            if (!target || typeof target !== "object") return
+            if (target.affinity === null || target.affinity === undefined || target.affinity === "") return
+            const value = Number(target.affinity)
+            if (Number.isFinite(value)) target.affinity = Math.round(Math.max(-100, Math.min(100, value * 2 - 100)))
+          }
+          if (!Array.isArray(parsed) && parsed?.relations && typeof parsed.relations === "object") {
+            for (const relation of Object.values(parsed.relations)) convert(relation)
+          }
+        }
+
+        if ((Array.isArray(parsed) || storeVersion < STORE_VERSION) && Array.isArray(list)) {
+          for (const entry of list) {
+            if (!entry?.relationship) continue
+            entry.relationship.trust = null
+            entry.relationship.affinity = null
+          }
+        }
+        needsPersist = Array.isArray(parsed) || storeVersion < STORE_VERSION || affinityScale < AFFINITY_SCALE
         this.relations = {}
         if (!Array.isArray(parsed) && parsed?.relations && typeof parsed.relations === "object") {
           for (const [scope, relation] of Object.entries(parsed.relations)) {
@@ -450,7 +507,7 @@ export default class AIMemoryStore {
       const temp = `${this.file}.tmp`
       fs.writeFileSync(
         temp,
-        JSON.stringify({ version: STORE_VERSION, entries: this.entries, relations: this.relations }, null, 2),
+        JSON.stringify({ version: STORE_VERSION, affinityScale: AFFINITY_SCALE, entries: this.entries, relations: this.relations }, null, 2),
         "utf8",
       )
       fs.renameSync(temp, this.file)
@@ -477,23 +534,30 @@ export default class AIMemoryStore {
     const occurredAt = normalizeDate(input.occurredAt, now)
     const normalized = normalizeContent(content)
     const originGroupId = normalizeGroupId(input.originGroupId || options.originGroupId)
+    const originUserId = String(input.originUserId || options.originUserId || "").slice(0, 64)
     const originChat =
       normalizeOriginChat(input.originChat || options.originChat) ||
       (originGroupId ? `group:${originGroupId}` : "")
     const relationScope =
-      normalizeRelationScope(options.relationScope) || defaultRelationScope(scope)
+      normalizeRelationScope(options.relationScope) || defaultRelationScope(scope, originUserId)
     const duplicate = this.entries.find(entry => {
       if (entry.scope !== scope || entry.kind !== kind) return false
       if (normalizeContent(entry.content) !== normalized) return false
       if (scope.startsWith("user:") && originPrivacy(entry.originChat) !== originPrivacy(originChat))
         return false
+
+      if (kind === "episode" && scope.startsWith("group:") && (entry.originUserId || "") !== originUserId)
+        return false
       return kind === "episode" ? sameDay(entry.occurredAt, occurredAt) : true
     })
     if (duplicate) {
+      const hadDelta = duplicate.relationship?.trust != null || duplicate.relationship?.affinity != null
       this._mergeInto(duplicate, input, occurredAt)
       duplicate.updatedAt = now
       duplicate.revision++
-      if (kind === "episode") this._applyRelation(duplicate, relationScope)
+
+      const hasDelta = duplicate.relationship?.trust != null || duplicate.relationship?.affinity != null
+      if (kind === "episode" && !hadDelta && hasDelta) this._applyRelation(duplicate, relationScope)
       this._recomputeDepths()
       this.save()
       return { success: true, action: "merged", entry: duplicate }
@@ -504,6 +568,7 @@ export default class AIMemoryStore {
         ...input,
         originChat,
         originGroupId,
+        originUserId,
         id: newId(),
         kind,
         scope,
@@ -522,7 +587,11 @@ export default class AIMemoryStore {
     this.entries.push(entry)
     if (kind === "episode") this._applyRelation(entry, relationScope)
 
-    this._prune(Number(options.max) || 5000)
+    const max =
+      options.max === undefined || options.max === null || options.max === ""
+        ? 5000
+        : Number(options.max)
+    this._prune(max)
     this._recomputeDepths()
     this.save()
     return { success: true, action: "created", entry }
@@ -538,8 +607,8 @@ export default class AIMemoryStore {
     }
     entry.tags = [...new Set([...(entry.tags || []), ...merged.tags])].slice(0, 10)
     entry.relationship = {
-      trust: merged.relationship.trust ?? entry.relationship.trust,
-      affinity: merged.relationship.affinity ?? entry.relationship.affinity,
+      trust: entry.relationship.trust ?? merged.relationship.trust,
+      affinity: entry.relationship.affinity ?? merged.relationship.affinity,
       note: entry.relationship.note || merged.relationship.note,
     }
     entry.importance = Math.max(entry.importance || 1, merged.importance || 1)
@@ -579,13 +648,15 @@ export default class AIMemoryStore {
 
   _applyRelation(entry, relationScope) {
     const scope =
-      normalizeRelationScope(relationScope) || defaultRelationScope(entry.scope)
+      normalizeRelationScope(relationScope) || defaultRelationScope(entry.scope, entry.originUserId)
     if (!scope) return
     const relation = this._relation(scope)
     relation.interactions += 1
-    const { trust, affinity } = entry.relationship || {}
-    if (trust !== null && trust !== undefined) relation.trust = Math.round(relation.trust * 0.7 + trust * 0.3)
-    if (affinity !== null && affinity !== undefined) relation.affinity = Math.round(relation.affinity * 0.7 + affinity * 0.3)
+    const trust = normalizeRelationshipDelta(entry.relationship?.trust)
+    const affinity = normalizeRelationshipDelta(entry.relationship?.affinity)
+    if (trust !== null) relation.trust = round2(Math.min(100, Math.max(0, relation.trust + trust)))
+    if (affinity !== null)
+      relation.affinity = round2(Math.min(100, Math.max(-100, relation.affinity + affinity)))
     if (entry.mood) relation.lastMood = entry.mood
     if (entry.energy) relation.lastEnergy = entry.energy
     if (entry.relationship?.note) relation.note = entry.relationship.note
@@ -595,10 +666,14 @@ export default class AIMemoryStore {
 
   relationsFor({ groupId, userId } = {}) {
     this._ensure()
-    let scope = groupId ? `group:${groupId}` : userId ? `private:${userId}` : "global"
+    const gid = normalizeGroupKey(groupId)
+    const uid = text(userId, 64).trim()
+    let scope = "global"
+    if (gid && isGroupId(gid)) scope = memberRelationScope(gid, uid) || `group:${gid}`
+    else if (uid) scope = `private:${uid}`
     let relation = this._relation(scope)
     if (scope.startsWith("private:") && relation.interactions === 0) {
-      const legacy = `user:${userId}`
+      const legacy = `user:${uid}`
       const legacyRelation = this._relation(legacy)
       if (legacyRelation.interactions > 0) {
         scope = legacy
@@ -623,9 +698,9 @@ export default class AIMemoryStore {
     if (!normalized) return { success: false, error: "scope 无效" }
     const relation = this._relation(normalized)
     const trust = clampNumber(updates.trust, 0, 100)
-    const affinity = clampNumber(updates.affinity, 0, 100)
-    if (trust !== null) relation.trust = Math.round(trust)
-    if (affinity !== null) relation.affinity = Math.round(affinity)
+    const affinity = clampNumber(updates.affinity, -100, 100)
+    if (trust !== null) relation.trust = round2(trust)
+    if (affinity !== null) relation.affinity = round2(affinity)
     if (updates.note !== undefined) relation.note = text(updates.note, 500).trim()
     relation.updatedAt = new Date().toISOString()
     this.relations[normalized] = relation
@@ -670,6 +745,8 @@ export default class AIMemoryStore {
   }
 
   _prune(max) {
+
+    if (!Number.isFinite(max) || max <= 0) return
     if (this.entries.length <= max) return
     const removable = this.entries
       .filter(entry => !entry.pinned)
@@ -778,12 +855,13 @@ export default class AIMemoryStore {
       if (updates[field] !== undefined) entry[field] = normalizeList(updates[field])
     }
     if (updates.relationship !== undefined) {
-      const relationship = normalizeRelationship(updates.relationship)
-      entry.relationship = {
-        trust: relationship.trust ?? entry.relationship.trust,
-        affinity: relationship.affinity ?? entry.relationship.affinity,
-        note: relationship.note || entry.relationship.note,
+      const raw = updates.relationship && typeof updates.relationship === "object" ? updates.relationship : {}
+      const merged = {
+        trust: Object.prototype.hasOwnProperty.call(raw, "trust") ? raw.trust : entry.relationship.trust,
+        affinity: Object.prototype.hasOwnProperty.call(raw, "affinity") ? raw.affinity : entry.relationship.affinity,
+        note: Object.prototype.hasOwnProperty.call(raw, "note") ? raw.note : entry.relationship.note,
       }
+      entry.relationship = normalizeRelationship(merged)
     }
     if (updates.tags !== undefined) entry.tags = normalizeTags(updates.tags)
     if (updates.emotion !== undefined) entry.emotion = normalizeEmotion(updates.emotion)

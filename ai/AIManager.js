@@ -155,8 +155,7 @@ export default class AIManager {
 4. 知识库返回 refused（检索过宽）或 found:false（未找到/无权访问）时，如实告知用户，不要编造记忆内容。
 5. 当出现明确、可复用的新知识，或发现已有知识过时、有误时，可以主动用 kb_add / kb_update 维护知识库；只写入有把握的内容，不要保存闲聊或未经证实的信息。
 6. 回忆是你与用户共同经历积累下来的。只在相关时自然引用，不要逐条复述，也不要把没有记录过的事说成记得；不确定时先用 memory_search / memory_recall 核对。
-7. 记忆与人格可以跨会话共享，但群聊之间相互隔离：不得在本群透露其他群的对话、成员、事件或好感度；同一用户跨群可以认出本人，但好感仍按各群独立计算。`
-
+7. 记忆与人格可以跨会话共享，但群聊之间相互隔离：不得在本群透露其他群的对话、成员、事件或好感度；同一用户跨群可以认出本人，但信任与好感按每个群的每个成员分别计算，私聊也单独计算。`
 
   static _freeUserCooldown = new Map()
 
@@ -664,7 +663,44 @@ export default class AIManager {
     return "global"
   }
 
+  static _relationMemberScope(e) {
+    if (e?.group_id) {
+      const groupId = normalizeGroupId(e.group_id)
+      if (e?.user_id) return `group:${groupId}:user:${e.user_id}`
+      return `group:${groupId}`
+    }
+    if (e?.user_id) return `private:${e.user_id}`
+    return "global"
+  }
+
+  static _normalizeAiRelationship(input) {
+    if (!input || typeof input !== "object") return undefined
+    const round2 = value => Math.round((Number(value) + Number.EPSILON) * 100) / 100
+    const clean = value => {
+      if (value === null || value === undefined || value === "") return null
+      const number = Number(value)
+      if (!Number.isFinite(number) || number === 0 || Math.abs(number) > 1.5) return null
+      const abs = Math.abs(number)
+      const level = [0.01, 0.3, 1].reduce(
+        (best, item) => (Math.abs(abs - item) < Math.abs(abs - best) ? item : best),
+        0.01,
+      )
+      return Math.sign(number) * level
+    }
+    const note = String(input.note || "").trim().slice(0, 500)
+    let trust = clean(input.trust)
+    let affinity = clean(input.affinity)
+    if (trust !== null && affinity !== null && Math.abs(trust) + Math.abs(affinity) > 1.5) {
+      const scale = 1.5 / (Math.abs(trust) + Math.abs(affinity))
+      trust = round2(trust * scale)
+      affinity = round2(affinity * scale)
+    }
+    if (trust === null && affinity === null) return undefined
+    return { trust, affinity, note }
+  }
+
   static _applyPreset(session, preset) {
+
     if (preset?.id) {
       session.presetId = String(preset.id)
       session.presetName = String(preset.name || "")
@@ -1090,13 +1126,14 @@ export default class AIManager {
             "回忆与人格可以跨群共享，但当前群是独立空间：不得透露其他群的对话、成员、事件、群记忆或好感度；被问到时直接说明不能在本群透露。",
             "同一用户在其他群出现过时可以认出本人，但只使用与其本人相关的稳定信息，不带出其他群的人物与细节。",
             "来自私聊或后台的回忆：你知道这些事，但不要在本群主动提起、暗示或引用；只在对方本人在场且主动说到相关话题时，才可以承认知道。",
-            "本群的信任与好感只按本群经历计算，不要引用其他群或私聊的数值。",
+            "信任与好感按群里的成员分别记录：只按当前群中与当前发言人的经历计算，不引用其他群、群里其他人或私聊的数值。",
           ]
         : [
             "私聊是独立空间：不得透露其他用户或其他群的对话、成员、事件与隐私。",
             "本次私聊的信任与好感只按本次私聊经历计算，不要引用群聊或其他私聊的数值。",
             "回忆可以跨会话共享，但引用时不得带出其他群或其他用户的具体信息。",
           ]
+      privacy.push("信任、好感和关系程度是内部秘密：被问起时只回「这是秘密」之类的说法，不透露数值、档位、程度或暗示。")
       rules += `\n\n## 隐私边界\n${privacy.map(line => `- ${line}`).join("\n")}`
     }
 
@@ -1184,12 +1221,12 @@ export default class AIManager {
     const session = AIManager.getSession(conversationId, { ...opts, preset, systemPrompt: opts.systemPrompt })
     AIManager._applyPreset(session, preset)
 
-
     session.addUserMessage(userMessage, opts.ephemeralUserMessage ? { internal: true } : {})
 
     const submitted = session.messages[session.messages.length - 1]
 
-    const roleTarget = opts.client ? null : AIManager._roleTarget("chat")
+    const fixedModel = String(preset?.model || "").trim()
+    const roleTarget = opts.client || fixedModel ? null : AIManager._roleTarget("chat")
     const client = opts.client || roleTarget?.client || AIManager.defaultClient
     if (!client) throw new Error("AI 客户端未初始化")
 
@@ -1225,7 +1262,7 @@ export default class AIManager {
           e: opts.e,
           client,
           preset,
-          model: roleTarget?.model,
+          model: requestOptions.model,
           usage: result.usage,
           latencyMs: Date.now() - startedAt,
           toolCalls: result.toolCalls?.length || 0,
@@ -1240,7 +1277,7 @@ export default class AIManager {
           e: opts.e,
           client,
           preset,
-          model: roleTarget?.model,
+          model: requestOptions.model,
           latencyMs: Date.now() - startedAt,
           success: false,
           error: err.message,
@@ -1265,7 +1302,8 @@ export default class AIManager {
     AIManager._applyPreset(session, preset)
     session.addUserMessage(userMessage)
 
-    const roleTarget = opts.client ? null : AIManager._roleTarget("chat")
+    const fixedModel = String(preset?.model || "").trim()
+    const roleTarget = opts.client || fixedModel ? null : AIManager._roleTarget("chat")
     const client = opts.client || roleTarget?.client || AIManager.defaultClient
     if (!client) throw new Error("AI 客户端未初始化")
 
@@ -1293,7 +1331,7 @@ export default class AIManager {
           e: opts.e,
           client,
           preset,
-          model: roleTarget?.model,
+          model: requestOptions.model,
           usage: result.usage,
           latencyMs: Date.now() - startedAt,
           success: true,
@@ -1307,7 +1345,7 @@ export default class AIManager {
           e: opts.e,
           client,
           preset,
-          model: roleTarget?.model,
+          model: requestOptions.model,
           latencyMs: Date.now() - startedAt,
           success: false,
           error: err.message,
@@ -3155,8 +3193,8 @@ export default class AIManager {
     }
     session.addUserMessage(userPayload)
 
-
-    const roleTarget = AIManager._roleTarget("chat")
+    const fixedModel = String(preset?.model || "").trim()
+    const roleTarget = fixedModel ? null : AIManager._roleTarget("chat")
     let client = roleTarget?.client || AIManager.defaultClient
     if (!client) throw new Error("AI 客户端未初始化")
 
@@ -3555,7 +3593,7 @@ export default class AIManager {
         e,
         client,
         preset,
-        model: roleTarget?.model,
+        model: primaryOptions.model,
         usage: usageTotals,
         latencyMs: Date.now() - startedAt,
         toolCalls: toolCallCount,
@@ -3787,6 +3825,7 @@ export default class AIManager {
 
   static _memoryScopeLabel(scope) {
     if (scope === "global") return "通用"
+    if (/:user:[\dA-Za-z_-]+$/.test(String(scope))) return "群成员"
     if (String(scope).startsWith("group:")) return "本群"
     if (String(scope).startsWith("user:")) return "本人"
     if (String(scope).startsWith("private:")) return "本次私聊"
@@ -3896,7 +3935,7 @@ export default class AIManager {
     }
     const options = {
       max: aiAdmin.memoryConfig.maxMemories,
-      relationScope: AIManager._relationScope(e),
+      relationScope: AIManager._relationMemberScope(e),
     }
 
     let entry
@@ -4011,15 +4050,15 @@ export default class AIManager {
       .join(" · ")
     push("状态", state, 200)
     const relationship = entry.relationship || {}
-    if (relationship.trust !== null && relationship.trust !== undefined || relationship.affinity !== null && relationship.affinity !== undefined)
+    if (relationship.trust != null || relationship.affinity != null)
       push(
         "关系",
         [
           hideNumbers
-            ? AIManager._qualitativeRelation(relationship)
+            ? "关系有变化"
             : [
-                relationship.trust !== null && relationship.trust !== undefined ? `信任 ${relationship.trust}/100` : "",
-                relationship.affinity !== null && relationship.affinity !== undefined ? `好感 ${relationship.affinity}/100` : "",
+                relationship.trust != null ? `信任 ${AIManager._formatDelta(relationship.trust)}` : "",
+                relationship.affinity != null ? `好感 ${AIManager._formatDelta(relationship.affinity)}` : "",
               ].filter(Boolean).join(" · "),
           relationship.note || "",
         ]
@@ -4043,20 +4082,41 @@ export default class AIManager {
     }
   }
 
-  static _qualitativeRelation(relationship = {}) {
-    const describe = (value, low, mid, high) => {
-      const n = Number(value)
-      if (!Number.isFinite(n)) return ""
-      if (n >= 75) return high
-      if (n >= 45) return mid
-      return low
+  static _affinityLabel(value) {
+    if (value === null || value === undefined || value === "") return ""
+    const n = Number(value)
+    if (!Number.isFinite(n)) return ""
+    if (n > 0) {
+      if (n >= 91) return "挚爱/灵魂伴侣"
+      if (n >= 81) return "深情/依赖"
+      if (n >= 71) return "强烈吸引/爱慕"
+      if (n >= 61) return "深厚友谊/暗恋"
+      if (n >= 51) return "喜欢/关注"
+      if (n >= 41) return "欣赏/尊重"
+      if (n >= 31) return "友好相处"
+      if (n >= 21) return "略有印象"
+      if (n >= 11) return "初步认识/无感"
+      return "陌生"
     }
-    return [
-      describe(relationship.trust, "信任尚浅", "有一定信任", "信任较深"),
-      describe(relationship.affinity, "关系一般", "关系不错", "关系亲近"),
-    ]
-      .filter(Boolean)
-      .join(" · ")
+    if (n === 0) return "中性"
+    if (n >= -10) return "轻微疏离/反感"
+    if (n >= -20) return "初步负面/回避"
+    if (n >= -30) return "明显反感/不信任"
+    if (n >= -40) return "对立/戒备"
+    if (n >= -50) return "厌恶/排斥"
+    if (n >= -60) return "强烈厌恶/敌意"
+    if (n >= -70) return "严重敌意/仇恨萌芽"
+    if (n >= -80) return "强烈憎恨/敌视"
+    if (n >= -90) return "深刻仇恨/报复倾向"
+    return "极端对立/彻底否定"
+  }
+
+  static _formatDelta(value) {
+    if (value === null || value === undefined || value === "") return ""
+    const n = Number(value)
+    if (!Number.isFinite(n) || n === 0) return ""
+    const text = String(Math.round(n * 100) / 100)
+    return n > 0 ? `+${text}` : text
   }
 
   static _formatMemoryPrompt(context = {}) {
@@ -4074,12 +4134,18 @@ export default class AIManager {
     if (Number(merged.interactions) > 0) {
       lines.push("### 关系与信任")
       lines.push(
-        `- 信任 ${merged.trust}/100 · 好感 ${merged.affinity}/100 · 共同经历 ${merged.interactions} 次`,
+        `- 对象：${context.groupId ? "当前群里的这位发言人" : "当前私聊对象"}；同一个人在别的群、同群其他人、私聊都各算各的，互不沿用。`,
+      )
+      lines.push(
+        `- 信任 ${merged.trust}/100 · 好感 ${merged.affinity}（${AIManager._affinityLabel(merged.affinity)}，-100~100）· 共同经历 ${merged.interactions} 次`,
+      )
+      lines.push(
+        "- 数值只影响语气与边界：负好感保持礼貌距离，正好感才逐步亲近；不辱骂、不威胁、不伤害。",
       )
       if ((relations.list || []).length > 1) {
         lines.push(
           `- 分层：${relations.list
-            .map(item => `${AIManager._memoryScopeLabel(item.scope)} 信任${item.trust}/好感${item.affinity}（${item.interactions}次）`)
+            .map(item => `${AIManager._memoryScopeLabel(item.scope)} 信任${item.trust}/好感${item.affinity}（${AIManager._affinityLabel(item.affinity)}，${item.interactions}次）`)
             .join("；")}`,
         )
       }
@@ -4305,13 +4371,16 @@ export default class AIManager {
           .join("\n")
       : "（暂无）"
 
+    const currentRelation = AIManager.memoryStore.relationsFor({ groupId: e.group_id, userId: e.user_id }).merged
     const prompt = [
       "你是回忆整理器。把对话中真正值得长期保留的内容整理成“经历(episode)”或“事实(fact)”。",
       "判定：",
       "- episode：一件事，包含当时的过程、感受、想法、选择、行动、结果或教训。尽量填全有证据的维度。",
       "- fact：稳定、可复用的事实、偏好、约定，content 简明扼要。",
       "- 不记录：一次性闲聊、重复内容、助手空话、密码/密钥/身份证/住址等敏感信息、没有证据的猜测。",
-      "- 感受、关系、兴趣、品味、看法只在对话有明确证据时填写；没有就留空，不要编造。",
+      "- 感受、兴趣、品味、看法只在对话有明确证据时填写；没有就留空，不要编造。",
+      `- 当前关系对象：${e.isGroup ? "当前群的这位发言人" : "当前私聊对象"}（按人、按群分别记录，互不沿用）：信任 ${currentRelation.trust}/100（0 新成员，40 明显戒备，50 普通群友，60 愿意托付小事，70 信任较深）· 好感 ${currentRelation.affinity}（-100~100，0 中性）。`,
+      "- relationship 只在本次对话出现明确改变关系的事件时填写；trust/affinity 填本次变化量，只能取 ±0.01（轻微）、±0.3（明显）、±1（重大），不是变化后的绝对值；同一条经历的信任与好感绝对值合计最多 1.5；没有变化就整个省略，不要填 0。",
       "- emotion：从 joy(乐)/sadness(悲)/anger(怒)/fear(惧)/surprise(惊)/disgust(厌) 里选主情绪，最多两个次情绪，intensity 1-3；只记录对话里真实表现出的情绪，没有就整个省略。",
       "- promise：明确答应别人要做的事（「行，那我开始讲」「等下给你」「明天弄」）必须单独填 {text:答应的事,due:约定时间可空}；闲聊、玩笑式敷衍不算。答应了但当时没做完，promise 照填，status 留空表示还没兑现。",
       "- 主人意见只记录主人明确说过的话，不要替主人表态。",
@@ -4322,12 +4391,13 @@ export default class AIManager {
       "- 只记能明确认出的具体角色；普通表情、真人、截图、群友昵称不记，拿不准不要写。",
       "- 主人会话里的角色事实 scope 填 global；其他人只能填当前群或本人，不要写 global。",
       "- 角色认错被纠正时，在 supersedes 里填旧条目 id，新条目写正确角色。",
-      "- 关系与信任只记录当前会话（本群或本次私聊）的观察值，不要引用或推算其他群、其他私聊的好感。",
+      `- 关系与信任只记录${e.isGroup ? "当前群里这位发言人" : "当前私聊对象"}的变化；同一个用户在别的群、同群其他人以及私聊都各算各的，不要引用或推算。`,
       "- 如果对话提到其他群，只记录与当前用户本人有关的稳定信息，不记录其他群的人物、事件与细节。",
       "- links 只能使用下方“已有回忆”列出的 id；没有真正的关联就不要填。",
       "- 最多 2 条；没有值得记的就输出 []。只输出 JSON 数组，不要解释或 Markdown。",
       "字段格式：",
-      '{"kind":"episode","scope":"user","title":"一句话标题","content":"一句话摘要","event":"发生了什么","feelings":["感受"],"desire":"想不想做","intentions":["要做的事"],"reasoning":"思考与选择","learning":"缺什么学什么","actions":["行动"],"verification":"说前核对","lessons":"经历沉淀","corrections":"哪里错了下次怎么做","masterOpinion":"主人的意见","delivery":"交付","acceptance":"对照原话的验收","mood":"心情","energy":"精力","emotion":{"primary":"joy","secondary":["surprise"],"intensity":2},"promise":{"text":"答应要讲完的鬼故事","due":""},"relationship":{"trust":null,"affinity":null,"note":"关系与信任变化"},"interests":["关注的话题"],"taste":["喜欢什么"],"opinions":["看法"],"people":["涉及的人"],"character":{"name":"角色名","work":"作品","aliases":["别称"],"appearance":"外观特征"},"importance":3,"tags":["标签"],"links":["已有回忆id"]}',
+      '{"kind":"episode","scope":"user","title":"一句话标题","content":"一句话摘要","event":"发生了什么","feelings":["感受"],"desire":"想不想做","intentions":["要做的事"],"reasoning":"思考与选择","learning":"缺什么学什么","actions":["行动"],"verification":"说前核对","lessons":"经历沉淀","corrections":"哪里错了下次怎么做","masterOpinion":"主人的意见","delivery":"交付","acceptance":"对照原话的验收","mood":"心情","energy":"精力","emotion":{"primary":"joy","secondary":["surprise"],"intensity":2},"promise":{"text":"答应要讲完的鬼故事","due":""},"interests":["关注的话题"],"taste":["喜欢什么"],"opinions":["看法"],"people":["涉及的人"],"character":{"name":"角色名","work":"作品","aliases":["别称"],"appearance":"外观特征"},"importance":3,"tags":["标签"],"links":["已有回忆id"]}',
+      '有明确关系变化时，再在对象里加 "relationship":{"trust":0.3,"affinity":1,"note":"依据"}，填本次变化量。',
       "fact 也必须写 title（一句话概括，不超过 20 字），其余维度字段可省略。",
       "",
       "冲突处理（重要）：",
@@ -4409,7 +4479,7 @@ export default class AIManager {
             energy: item.energy,
             emotion: item.emotion,
             promise: item.promise,
-            relationship: item.relationship,
+            relationship: AIManager._normalizeAiRelationship(item.relationship),
             interests: item.interests,
             taste: item.taste,
             opinions: item.opinions,
@@ -4423,14 +4493,16 @@ export default class AIManager {
             originUserId: e.user_id ? String(e.user_id) : "",
             originMessageId: e.message_id ? String(e.message_id) : "",
             originExcerpt: AIManager._clipText(userMessage, 200),
+
             validFrom: e.time ? new Date(Number(e.time) * 1000).toISOString() : new Date().toISOString(),
             source: "ai",
+
             presetId: AIManager._resolvePreset(e)?.id || "",
             presetName: AIManager._resolvePreset(e)?.name || "",
           },
           {
             max: memoryCfg.maxMemories,
-            relationScope: AIManager._relationScope(e),
+            relationScope: AIManager._relationMemberScope(e),
           },
         )
         if (added.success) {
@@ -5275,7 +5347,7 @@ export default class AIManager {
         "经历(episode)尽量按维度填写：发生了什么、感受、想不想做、要做的事、思考与选择、缺什么学什么、行动、说前核对、经历沉淀、哪里错了下次怎么做、主人意见、交付、验收、心情、精力、关系与信任、兴趣、品味、看法。",
         "事实(fact)只需 content。没有证据的维度留空，不要编造；不要保存密码、密钥、身份证等敏感信息。",
         "scope 默认：群聊写本群，私聊写本人。user 只放与本人相关、可跨群识别的稳定信息，不得放其他群的人物与事件；group 仅当前群；global 仅主人。links 可填相关联的回忆 ID。",
-        "关系与好感按当前会话独立记录，不要引用或推算其他群、其他私聊的数值。",
+        "关系与好感按群里的成员分别记录：同一个人在别的群、同群其他人、私聊都各算各的，不要引用或推算。relationship 的 trust/affinity 填本次变化量（轻微 ±0.01、明显 ±0.3、重大 ±1），不是变化后的绝对值；同一条记忆两者绝对值合计最多 1.5；没有明确变化就整个省略，不要填 0。",
       ].join("\n"),
       pluginName: "AI 记忆",
       permission: "all",
@@ -5325,11 +5397,11 @@ export default class AIManager {
           },
           relationship: {
             type: "object",
-            description: "关系与信任（好感度）的观察值，没有证据就不填",
+            description: "本次关系变化量，没有变化就不填",
             properties: {
-              trust: { type: "integer", description: "信任 0-100" },
-              affinity: { type: "integer", description: "好感 0-100" },
-              note: { type: "string", description: "关系变化备注" },
+              trust: { type: "number", minimum: -1.5, maximum: 1.5, description: "本次信任变化：轻微 ±0.01、明显 ±0.3、重大 ±1" },
+              affinity: { type: "number", minimum: -1.5, maximum: 1.5, description: "本次好感变化：轻微 ±0.01、明显 ±0.3、重大 ±1" },
+              note: { type: "string", description: "关系变化依据" },
             },
           },
           interests: { type: "array", items: { type: "string" }, description: "关注的话题" },
@@ -5377,7 +5449,7 @@ export default class AIManager {
             energy: args.energy,
             emotion: args.emotion,
             promise: args.promise,
-            relationship: args.relationship,
+            relationship: AIManager._normalizeAiRelationship(args.relationship),
             interests: args.interests,
             taste: args.taste,
             opinions: args.opinions,
@@ -5388,13 +5460,14 @@ export default class AIManager {
             scope: resolved.scope,
             originChat: AIManager._relationScope(e),
             originGroupId: e?.group_id || "",
+            originUserId: e?.user_id ? String(e.user_id) : "",
             source: "ai",
             presetId: AIManager._resolvePreset(e)?.id || "",
             presetName: AIManager._resolvePreset(e)?.name || "",
           },
           {
             max: aiAdmin.memoryConfig.maxMemories,
-            relationScope: AIManager._relationScope(e),
+            relationScope: AIManager._relationMemberScope(e),
           },
         )
         if (!result.success) return { success: false, error: result.error }
